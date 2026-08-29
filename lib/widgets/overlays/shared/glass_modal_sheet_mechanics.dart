@@ -4,6 +4,11 @@ part of '../glass_modal_sheet.dart';
 // Sheet States & Modes
 // ===========================================================================
 
+/// Progress toward the topmost detent past which the sheet counts as being at
+/// it. The content's physics unlock here, and the gesture handover uses the
+/// same line so the two can never disagree about who owns a drag.
+const double _kTopDetentThreshold = 0.95;
+
 /// The discrete snap positions a [GlassModalSheet] can occupy.
 enum GlassSheetState {
   /// Sheet is fully offscreen — invisible and not interactable.
@@ -180,24 +185,19 @@ class SheetGeometry {
     this.dismissible = true,
   });
 
-  /// Resolve whether the peek floor is active, from the public API's three
-  /// inputs. Pure and static so the precedence is testable and reviewable in
-  /// one place instead of inline in the widget's state.
+  /// Resolve whether the peek floor is active, from the public API's detents
+  /// and mode.
   ///
-  /// Precedence:
-  ///   1. [enablePeek] when set explicitly — deprecated, but an existing
-  ///      caller's intent must keep winning.
-  ///   2. [GlassSheetDetent.small] in [detents] — the current way.
-  ///   3. [GlassSheetMode.persistent], which is DEFINED by resting on a floor
-  ///      instead of dismissing, so it keeps peek under the default detents.
+  /// The peek floor is active when:
+  ///   1. [GlassSheetDetent.small] is in [detents].
+  ///   2. [GlassSheetMode.persistent] is active (a persistent sheet is DEFINED
+  ///      by resting on a floor instead of dismissing).
   static bool resolvePeek({
-    required bool? enablePeek,
     required Set<GlassSheetDetent> detents,
     required GlassSheetMode mode,
   }) =>
-      enablePeek ??
-      (detents.contains(GlassSheetDetent.small) ||
-          mode == GlassSheetMode.persistent);
+      detents.contains(GlassSheetDetent.small) ||
+      mode == GlassSheetMode.persistent;
 
   /// The rest states this sheet can occupy, ordered low → high. This is the
   /// single source of truth for the state machine — snapping, min/max bounds,
@@ -446,6 +446,16 @@ class GlassModalSheetController {
   /// Notifies on every sheet position change — drag and snap animation alike.
   /// Null until the sheet is mounted; read [progress] from inside the listener.
   Listenable? get progressListenable => _state?._progressNotifier;
+
+  /// The sheet's live position, straight off its animation controller, or null
+  /// while no sheet is attached.
+  ///
+  /// [value] reports the position the sheet last *built* at. That is what
+  /// consumers want, but it lags by a frame inside a pointer handler or a
+  /// [progressListenable] callback — both run before the sheet rebuilds — and
+  /// the null case distinguishes "not mounted yet" from a sheet genuinely
+  /// sitting at 0.0.
+  double? get _livePosition => _state?._animationController.value;
 }
 
 // ===========================================================================
@@ -488,6 +498,14 @@ class GestureArena {
   /// Whether the disambiguated gesture direction is vertical.
   bool isVerticalGesture = false;
 
+  /// Pointer y at the previous move, giving the instantaneous drag direction.
+  ///
+  /// Travel measured from [dragStartY] cannot serve the mid-gesture handovers:
+  /// a drag that grew the sheet is still net-upward at the moment it turns
+  /// around, so cumulative travel would report the wrong direction exactly when
+  /// ownership needs to change.
+  double lastMoveY = 0.0;
+
   /// Tracks pointer samples to compute a fling velocity at gesture end.
   VelocityTracker velocityTracker =
       VelocityTracker.withKind(PointerDeviceKind.touch);
@@ -496,12 +514,14 @@ class GestureArena {
   void reset() {
     phase = GesturePhase.idle;
     isVerticalGesture = false;
+    lastMoveY = 0.0;
   }
 
   /// Called when a pointer-down event lands in the sheet's handle zone.
   void beginHandleDrag(double y, double sheetPosition) {
     phase = GesturePhase.handleDrag;
     dragStartY = y;
+    lastMoveY = y;
     dragStartSheetPosition = sheetPosition;
   }
 
@@ -510,6 +530,7 @@ class GestureArena {
       double y, double x, double sheetPosition, PointerDeviceKind kind) {
     phase = GesturePhase.idle;
     dragStartY = y;
+    lastMoveY = y;
     dragStartX = x;
     dragStartSheetPosition = sheetPosition;
     isVerticalGesture = false;
@@ -517,6 +538,15 @@ class GestureArena {
   }
 
   /// Returns true if gesture should be claimed by sheet (not scroll).
+  ///
+  /// The decision is not final. A sheet that reaches its topmost detent part-way
+  /// through an upward drag hands the rest of that pointer to the content, so
+  /// growing the sheet and scrolling its content are one continuous gesture.
+  ///
+  /// [atTopDetent] reports measured travel, and the handovers use it rather than
+  /// `currentState == maxState`: [currentState] carries the drag's *predicted*
+  /// target mid-gesture, so keying off it would stand the sheet down while it
+  /// was still travelling, stranding it short of the detent it was predicting.
   bool evaluateMove(
     double y,
     double x,
@@ -525,9 +555,43 @@ class GestureArena {
     double threshold, {
     required bool canScrollListUp,
     required bool hasScrollClients,
+    required bool atTopDetent,
   }) {
-    if (phase == GesturePhase.contentDrag) return true;
-    if (phase == GesturePhase.scrolling) return false;
+    final double previousY = lastMoveY;
+    lastMoveY = y;
+    final bool draggingUp = y < previousY;
+    final bool draggingDown = y > previousY;
+
+    if (phase == GesturePhase.contentDrag) {
+      // Re-evaluated on every move rather than only at the decision moment: a
+      // drag that began below the top detent stops being the sheet's the
+      // instant the sheet tops out. Standing down here lets the same finger
+      // carry on as a content scroll, instead of rubber-banding a sheet that
+      // cannot grow any further.
+      if (atTopDetent && draggingUp && hasScrollClients) {
+        phase = GesturePhase.scrolling;
+        isVerticalGesture = true;
+        return false;
+      }
+      return true;
+    }
+
+    if (phase == GesturePhase.scrolling) {
+      // The reverse handover. Content pulled back to its top gives the rest of
+      // a downward drag to the sheet, so returning to the top and collapsing
+      // are one gesture rather than two. Gated on a vertical gesture: a
+      // horizontal swipe also rests in this phase and must never wake the
+      // sheet.
+      if (isVerticalGesture &&
+          atTopDetent &&
+          draggingDown &&
+          !canScrollListUp) {
+        phase = GesturePhase.contentDrag;
+        return true;
+      }
+      return false;
+    }
+
     if (phase == GesturePhase.handleDrag) return true;
 
     final dy = (y - dragStartY).abs();
@@ -572,6 +636,7 @@ class GestureArena {
           // Swiping UP
           if (hasScrollClients) {
             phase = GesturePhase.scrolling;
+            isVerticalGesture = true;
             return false;
           } else {
             phase = GesturePhase.contentDrag;
@@ -582,6 +647,7 @@ class GestureArena {
           // Swiping DOWN
           if (canScrollListUp) {
             phase = GesturePhase.scrolling;
+            isVerticalGesture = true;
             return false;
           } else {
             phase = GesturePhase.contentDrag;

@@ -1,9 +1,9 @@
 // ignore_for_file: public_member_api_docs
-// Internal sub-widgets for GlassSearchableBottomBar.
+// Internal sub-widgets for GlassTabBar.searchable.
 //
-// Extracted from glass_searchable_bottom_bar.dart to keep that file focused on
+// Extracted from glass_tab_bar.dart to keep that file focused on
 // the public API and layout orchestration. Mirrors the pattern established by
-// bottom_bar_internal.dart for GlassBottomBar.
+// tab_bar_bottom_internal.dart for GlassTabBar.bottom.
 //
 // None of these widgets are part of the public API.
 // ignore_for_file: deprecated_member_use
@@ -20,7 +20,7 @@ import '../../../widgets/interactive/glass_button.dart';
 import '../../../widgets/shared/adaptive_glass.dart';
 import '../../../widgets/shared/animated_glass_indicator.dart';
 import '../../../widgets/shared/inherited_liquid_glass.dart';
-import '../../../widgets/surfaces/glass_bottom_bar.dart'
+import '../../../widgets/surfaces/shared/tab_bar_types.dart'
     show MaskingQuality, JellyClipper;
 import '../../../widgets/surfaces/shared/glass_search_bar_config.dart';
 import 'tab_bar_drag_gesture_mixin.dart';
@@ -96,10 +96,10 @@ class DismissPill extends StatelessWidget {
 // SearchableTabIndicator
 // =============================================================================
 
-/// Draggable glass indicator for [GlassSearchableBottomBar].
+/// Draggable glass indicator for [GlassTabBar.searchable].
 ///
-/// Uses identical spring physics and masking to [GlassBottomBar]'s internal
-/// `_TabIndicator`. When [isSearchActive] is `true`, it collapses to show only
+/// Uses identical spring physics and masking to [GlassTabBar.bottom]'s internal
+/// `_TabIndicator`. When `isSearchActive` is `true`, it collapses to show only
 /// the [collapsedLogoBuilder] and a tap dismisses search.
 class SearchableTabIndicator extends StatefulWidget {
   const SearchableTabIndicator({
@@ -117,6 +117,7 @@ class SearchableTabIndicator extends StatefulWidget {
     required this.magnification,
     required this.innerBlur,
     required this.maskingQuality,
+    this.passthroughOverPlatformView = false,
     required this.isSearchActive,
     required this.onDismissSearch,
     this.indicatorColor,
@@ -156,6 +157,18 @@ class SearchableTabIndicator extends StatefulWidget {
   final double magnification;
   final double innerBlur;
   final MaskingQuality maskingQuality;
+
+  /// The glass sits over a platform view whose pixels cannot be captured, so
+  /// its body is transparent rather than an invented fill colour.
+  ///
+  /// The indicator refracts the bar's own icon layer in that situation, and
+  /// that layer is also drawn on screen - with a see-through body the crisp
+  /// copy shows next to the refracted one, i.e. every label appears twice.
+  /// So when this is set the selected content is lifted OUT of the refracted
+  /// icon layer and drawn ABOVE the glass instead: the layer under the pill
+  /// holds nothing, the glass still refracts what surrounds it, and each
+  /// label exists exactly once.
+  final bool passthroughOverPlatformView;
   final GlobalKey? backgroundKey;
   final bool isSearchActive;
   final VoidCallback onDismissSearch;
@@ -264,7 +277,7 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
       );
     }
 
-    // ── Normal draggable tab bar — identical logic to GlassBottomBar ─────────
+    // ── Normal draggable tab bar — identical logic to GlassTabBar.bottom ─────
     final theme = CupertinoTheme.of(context);
     final indicatorColor = widget.indicatorColor ??
         theme.textTheme.textStyle.color?.withValues(alpha: .1) ??
@@ -617,24 +630,25 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
                                     child: widget.childUnselected,
                                   ),
                                 ),
-                                ClipPath(
-                                  clipBehavior: Clip.antiAliasWithSaveLayer,
-                                  clipper: JellyClipper(
-                                    itemCount: widget.tabCount,
-                                    alignment: alignment,
-                                    thickness: thickness,
-                                    expansion: widget.indicatorExpansion
-                                        .resolve(Directionality.of(context)),
-                                    transform: jellyTransform,
-                                    borderRadius: effRadius * 2,
+                                if (!widget.passthroughOverPlatformView)
+                                  ClipPath(
+                                    clipBehavior: Clip.antiAliasWithSaveLayer,
+                                    clipper: JellyClipper(
+                                      itemCount: widget.tabCount,
+                                      alignment: alignment,
+                                      thickness: thickness,
+                                      expansion: widget.indicatorExpansion
+                                          .resolve(Directionality.of(context)),
+                                      transform: jellyTransform,
+                                      borderRadius: effRadius * 2,
+                                    ),
+                                    child: Container(
+                                      padding: widget.tabPadding,
+                                      height: widget.barHeight,
+                                      child: widget.selectedTabBuilder(
+                                          context, thickness, alignment),
+                                    ),
                                   ),
-                                  child: Container(
-                                    padding: widget.tabPadding,
-                                    height: widget.barHeight,
-                                    child: widget.selectedTabBuilder(
-                                        context, thickness, alignment),
-                                  ),
-                                ),
                               ],
                             ),
                           ),
@@ -673,6 +687,33 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
                 ? _iconLayerKey
                 : widget.backgroundKey,
           ),
+
+          // 4. The selected content, lifted above the glass. Only in
+          // passthrough: the pill's body is see-through there, so this copy
+          // cannot live under it (see [passthroughOverPlatformView]).
+          if (widget.passthroughOverPlatformView)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ClipPath(
+                  clipBehavior: Clip.antiAliasWithSaveLayer,
+                  clipper: JellyClipper(
+                    itemCount: widget.tabCount,
+                    alignment: alignment,
+                    thickness: thickness,
+                    expansion: widget.indicatorExpansion
+                        .resolve(Directionality.of(context)),
+                    transform: jellyTransform,
+                    borderRadius: indicatorRadius * 2,
+                  ),
+                  child: Container(
+                    padding: widget.tabPadding,
+                    height: widget.barHeight,
+                    child: widget.selectedTabBuilder(
+                        context, thickness, alignment),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

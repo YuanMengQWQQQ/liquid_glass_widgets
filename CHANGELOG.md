@@ -1,3 +1,144 @@
+# 1.2.0
+
+## New Features
+
+- **Native gel morph for pinned clusters:** A cluster present on both routes now reshapes the way the iOS 26 bar does instead of gliding between widths. Its width and item positions ride the package's bouncy spring profile for the full length of the route transition, settling in the same breath the page lands; the spring's overshoot is deliberately not walked in width — it is expressed as a whole-shell squeeze instead, layered on a gel pulse that inflates the shell early — height, radius and glyphs together, as real geometry through the glass renderer. Glyphs no longer plainly cross-fade: an outgoing glyph smears away under heavy blur while the shell reshapes beneath it, and an incoming one arrives soft and sharpens last. A pop plays the same forward choreography toward the other cluster rather than the push in reverse. The morph stays a pure function of the route clock; timing and blur constants live together in `GlassNavPinnedMetrics`, and the choreography is locked down by a frame-by-frame trace test. (Clusters only one route has materialize instead — see below.)
+- **Header Actions Morph demo:** New pattern in the example app's Navigation Patterns page — a repository-style drill-down where each destination carries a different trailing cluster (contract to one, identifier-matched hold, widen to three), so every capsule morph can be exercised and scrubbed in isolation.
+- **Progressive Blur Scroll Edge Style (`GlassScrollEdgeStyle.blur`):** Introduces a hardware-accelerated GPU progressive Gaussian frost option via `ProgressiveBlur`, applying an `ImageFilter.shader` pass with ease-in quadratic falloff (`falloff: 1.2`) directly over live scrolling content. Default remains `GlassScrollEdgeStyle.soft` (the diffused gradient fade matching iOS 26's `.scrollEdgeEffectStyle(.soft)`). Developers can opt into `.blur` for richer frosting over custom dynamic gradients, video backdrops, or media grids.
+- **Configurable `maxSigma` & Signed Fade Extents:** Exposes `maxSigma` (default 18.0) for `GlassScrollEdgeStyle.blur`, alongside signed `topEdgeFadeExtent` and `bottomEdgeFadeExtent` (default 20.0) on `GlassScaffold` and `GlassScrollEdgeEffect` for granular transition zone control (including negative extents for tight floating-bar insets).
+- **Materialize entrance & exit transitions (`GlassMaterialize`):** Glass items now appear and disappear the way iOS 26 does, mirroring SwiftUI's `glassEffectTransition(.materialize)`: the glass fades up as it settles inward from slightly oversized, and its content sharpens only after the shape has resolved — reversed on the way out, where the content blurs away first and leaves the shell briefly empty before it dissolves. `GlassMaterialize` is the implicit `visible:`-driven form (the `AnimatedOpacity` idiom); `GlassMaterializeTransition` is the explicit `Animation`-driven form (the `FadeTransition` idiom), and doubles as an `AnimatedSwitcher.transitionBuilder` via `GlassMaterializeTransition.switcherBuilder`. Works on any glass surface at any quality tier: rather than fading a layer — which pops, because a backdrop pass renders fully or not at all — the effect drives the glass shader's own visibility uniforms, where the refraction warp lerps to identity and the render pass drops out entirely at zero.
+- **Pinned navigation chrome materializes (behaviour change):** A pinned back button or actions capsule that only one of the two routes has no longer switches on or off at the transition midpoint — it materializes or dematerializes over a window straddling it. The phase is a pure function of route progress, so a pop plays the windows in reverse with the exit still leading the entrance in both directions. An interactive back-swipe does *not* scrub them: the page and title track the finger, but the chrome holds still until the gesture commits and then plays its transition over the travel that remains, so a swipe you abandon never half-dissolves anything. A capsule present on *both* routes is unaffected: it still morphs in place with one persistent glass shell. Opt out with `GlassNavigationShell.effectTransition: GlassEffectTransition.identity`, which restores the 1.1.0 behaviour exactly; **Reduce Motion selects it automatically**, and the standalone widgets likewise fall back to a plain cross-dissolve with no scale or blur.
+- **Materialize Playground Demo:** Added `example/lib/demos/materialize_demo.dart` — a single glass button, a multi-item capsule, and an `AnimatedSwitcher` swapping glass chips, each toggleable, over a busy backdrop with a live Reduce Motion switch.
+- **`GlassPinnedBarChrome` — pin a bar that isn't a `GlassAppBar`:** The registration handshake behind `GlassAppBar.pinned` is now public, so an app whose bars are its own widgets — a Material `AppBar` with a bespoke backdrop, a collapsing large-title sliver — can join a `GlassNavigationShell` without reimplementing it. Items are declared once as data; the builder receives `chrome.leading` and `chrome.actions`, which hold the real glass buttons until the shell has both accepted the registration and had a frame to render its copy, and same-sized unpainted placeholders after — so the bar never builds a second copy and nothing shifts at the hand-over. `GlassAppBar.pinned` now builds its own slots the same way, so there is one implementation rather than two. An `enabled` flag keeps a nested navigator's roots out of the shell, which ranks routes within a single `Navigator`. New **Custom Bar Pinning** pattern in the nav-patterns demo pins a plain Material `AppBar`.
+- **Pinned leading items (`GlassAppBar.pinned(leading:)`):** The pinned bar's leading slot is no longer limited to its own automatic back button, so a screen with a Cancel, a close button or a profile photo can pin its chrome instead of falling back whole. `leading` takes the same `GlassBarItem` vocabulary as `actions` and inherits the whole morph — width interpolation, `id` matching, icon cross-fade, taps swallowed mid-transition — because the cluster render object now anchors to whichever edge it is pinned to rather than always the trailing one. A non-empty `leading` **replaces** the back button, matching `UINavigationItem.leftBarButtonItems` and Flutter's own `AppBar.leading`; `leadingItemsSupplementBackButton: true` shows both, mirroring `UINavigationItem.leftItemsSupplementBackButton`. A lone back button renders exactly as before.
+- **`GlassBarItemBackground` — per-item glass:** Collapses the two booleans iOS 26 added to `UIBarButtonItem` into their three distinct results: `shared` (the default — `sharesBackground`, items form one capsule), `separate` (`sharesBackground: NO` — its own shell, which at a lone icon's size is the circular button iOS 26 draws for a single bar item) and `none` (`hidesSharedBackground` — no glass at all, for content that carries its own shape, such as a profile photo). A cluster now renders one shell per group rather than always one capsule.
+- **Leading Items demo:** The nav-patterns showcase gains a pattern walking the four leading configurations — a bare avatar, the implied back button, a leading that replaces it, and one beside it — plus the lone circular shell growing into a two-item capsule.
+- **Scroll Edge Playground Demo:** Added a comprehensive interactive showcase in the example app (`example/lib/demos/scroll_edge_style_demo.dart`) featuring live style switching (`soft`, `hard`, `blur`), real-time extent/sigma sliders, top/bottom toggles, and floating `GlassAppBar` & `GlassTabBar.bottom` integration with solid content cards.
+- **Bottom accessory follows the bar (behaviour change) (#226):** on
+  `GlassTabBar.minimizable`, a `bottomAccessory` with no explicit
+  `bottomAccessoryPlacement` now resolves to
+  `GlassTabBarAccessoryPlacement.inline` while the bar is minimized, matching
+  how iOS 26 animates a `tabViewBottomAccessory` down into the minimized bar.
+  Previously it stayed `expanded` unless `inline` was passed explicitly.
+
+  **This changes what `GlassTabBarAccessoryPlacementScope.of(context)` returns**
+  for affected callers — an accessory that switches on it will render its
+  compact variant on scroll where it previously did not, with no code change on
+  your side — and shrinks `preferredSize` by
+  `bottomAccessorySpacing + bottomAccessoryHeight` while minimized. Affects only
+  bars that have an accessory, pass no explicit placement, and reach the
+  minimized state. Pass `GlassTabBarAccessoryPlacement.expanded` to keep the
+  previous behaviour.
+
+  `GlassTabBar.searchable` is deliberately unchanged. Auto-collapsing on search
+  was removed in 0.x because it hid the mini-player behind the search capsule,
+  and that decision stands — a search field expanding is not the bar minimizing.
+
+## API
+
+- **`PlatformViewGlassMode.passthrough` — glass over platform views (#247):** New enum value on `LiquidGlassSettings`. Instead of resolving to black where the backdrop capture held nothing (over a map, camera, video, or WebView), coverage follows what was actually sampled so the live view shows through. Default is `PlatformViewGlassMode.fallbackColor` — no behaviour change for existing callers. `GlassTabBar` gains a matching `passthroughOverPlatformView` flag that lifts selected-tab content above the glass to avoid the doubled-label the refracted icon layer would otherwise cause.
+
+- **`GlassChip.platformViewBackdrop` (#250):** `GlassButton` already exposed this parameter; `GlassChip` now surfaces and forwards it, closing the gap for chips rendered over platform views. Default is `false`, no change for existing callers.
+
+- **`GlassNavPinnedMetrics` is now exported from the package barrel:** The geometry the pinned shell redraws hoisted chrome at — 44pt back circle, 46pt action slots, 44pt toolbar band, 8pt edge inset. A bar that is not a `GlassAppBar` had no supported way to reach it and had to hardcode the numbers, which drift the first time the package retunes them. The `show` clause exposes the metrics only; `GlassNavPinnedHost` and the cluster render objects stay internal. Documented under [Glass Navigation Transition](docs/GLASS_NAVIGATION_TRANSITION.md#if-your-bar-is-not-a-glassappbar).
+
+## Bug Fixes
+
+- **Sheet ↔ content scroll handover (#256):** A multi-detent `GlassModalSheet` now grows and then scrolls its content on one unbroken drag, and reverses the same way. The physics below the top detent refuse the movement rather than the gesture so the `Scrollable` stays live, the sheet installs them on its vertical scrollables itself rather than only publishing them, and the gesture arena re-evaluates ownership on every move instead of latching it for the whole pointer. Content scrolling on a `ScrollController` of its own is now observed too.
+
+- **`GlassNavPinnedMetrics.crossFadeStart`/`crossFadeEnd` changed meaning:** they are now fractions of the `morphStart`..`morphEnd` morph window rather than of raw route progress (and the sharpen window `glyphSharpenStart`/`glyphSharpenEnd` is specified the same way). Anything aligning custom chrome against these constants should read them through `GlassNavPinnedMetrics.morphProgressAt`.
+- **Matched icons no longer spuriously cross-fade:** Cross-fade detection compared item content by reference, on the documented assumption that identical `const Icon(...)` expressions share one canonical instance — which does not reliably hold, so an icon matched across a push was quietly cross-faded with itself on every transition. Invisible while the pixels were identical, but the new morph keys its gel and glyph blur off the same signal, which turned the phantom change into a visible bounce on clusters that had not changed at all. Icons are now compared by value (glyph, size, colour, key); other content stays on reference identity.
+
+- **`GlassTabBarMinimizeController` drivable without a `ScrollController`:** The state machine's only controller-free entry point, `handleSample`, was annotated `@visibleForTesting`, so a host that observes scrolling with a `NotificationListener` — an app-level scaffold wrapping arbitrary screen bodies, which cannot reach whichever `ScrollController` the current screen owns — could not use the controller at all. The annotation is gone, and a new `handleNotification(ScrollNotification)` drives the minimize from notifications directly, carrying the `UserScrollNotification` direction across the updates that follow it. Leave `GlassTabBar.minimizable`'s `scrollController` off when driving it this way; the example app's minimizable bar demo switches between both sources.
+
+- **Quality recovery is reachable again (#261):** `GlassQualityAdapter` stepped down readily and, in a real app, effectively never stepped back up — a single transient cost (a map or other native platform view, a route with large images) demoted the whole app's glass for the rest of the session. Recovery needs `upgradeWindowCount` *consecutive* under-budget windows, and a window landing between the two thresholds reset that counter to zero. Because the measure is P95, a tail statistic, an ordinary scrolling list drifts into that neutral band often enough that the counter never reached the threshold. A neutral window now decays the counter by one instead of clearing it, so a mostly-good stretch accumulates toward recovery. Degradation is unaffected: an over-budget window still zeroes the counter as before, and a genuinely marginal device still hovers without recovering.
+
+- **`blur: 0` no longer downgrades any tier to `_FrostedFallback` (#253):** Setting `blur: 0` on a premium or standard surface previously routed it silently to `_FrostedFallback`, stripping the rim, Fresnel, and specular along with the blur. The layer's own pass-1 guard (`effectiveBlur > 0`) already handles zero blur cleanly — it skips the blur pass and leaves refraction and lighting intact. **Visual change at standard:** a `blur: 0` surface previously resolving to `_FrostedFallback` now renders the lightweight shader instead. Use `GlassQuality.minimal` explicitly if the frost fallback was intentional.
+
+- **Presented routes now cover the pinned chrome (#259):** A route presented over a pinned screen — a dialog, an action sheet, a `GlassModalSheet`, or a `fullscreenDialog` — now covers the pinned chrome the way it covers the rest of the page. Previously the glass back button and actions capsule stayed painted above the presentation at full brightness while everything else dimmed. The shell detects a presentation via `_isPresentedOver` (not current and at rest — distinguishing it from a popping route, which is not current but is in flight) and hands the chrome back to the route; `GlassPinnedBarChrome` follows the shell's decision via a `chromeChanges` listener, snapshotting each answer so the bar and shell swap in the same frame. `GlassPinnedBarChromeData.hoisted` documents the new lifecycle.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the materialize transitions, pinned navigation chrome, leading API and per-item glass backgrounds, scroll-to-minimize controller improvements, bottom accessory inline behaviour, metrics export, and the presented-route chrome fix (#240, #238, #236, #239, #233, #234, #259).
+
+Thanks to [@marco242424](https://github.com/marco242424) for the native gel morph (#243).
+
+Thanks to [@Nixxx19](https://github.com/Nixxx19) for the platform-view glass passthrough mode, `GlassChip` backdrop parameter, the blur tier-downgrade fix, and the form sheet content scroll issue (#247, #250, #253, #258).
+
+---
+
+# 1.1.0
+
+## New Features
+
+- **GlassNavigationTransition — pinned navigation-bar chrome:** New `GlassNavigationShell` hosts the glass back button and trailing actions capsule *above* the `Navigator`, reproducing the iOS 26 navigation bar: page content and title slide during push/pop (including the interactive back-swipe, scrubbed proportionally) while the glass chrome stays pinned and morphs in place. Screens opt in with the `GlassAppBar.pinned` constructor, declaring actions as data (`GlassBarItem.icon` / `GlassBarItem.custom`); items sharing an `id` are treated as the same item across routes, mirroring `UIBarButtonItem.identifier`. Custom widgets are measured at intrinsic width, exactly as UIKit measures a `customView`. Works with any Pages-API router (go_router, auto_route, beamer) — the shell only reads `ModalRoute` animations. Without a shell, or where the effect cannot render, the same data renders in-route as today's glass capsule.
+- **`GlassBarItem.menu` — pull-down menus in a pinned bar:** The `UIBarButtonItem.menu` analogue, and the iOS 26 overflow button. The whole capsule morphs into the pull-down, matching `GlassButtonGroupItem.menu`. Menus cannot be opened mid-transition, and one already open is dismissed when navigation starts — the pinned capsule outlives the route that owns it, so nothing else would. Falls back to `GlassButtonGroupItem.menu` in-route wherever pinning does.
+- **GlassAppBar single-line titles:** The inline title no longer wraps to a second line when wide actions squeeze it; it truncates with an ellipsis, matching iOS.
+- **`GlassModalSheet` swipe-dismissals morph back from the release point (#223):** Dragging a morphed sheet away used to skip the morph and slide the sheet off. Below the lowest detent the sheet now shrinks about the grabbed point as it follows the finger — the interactive zoom-dismissal measured off iOS 26 — and the release hands that exact frame to the closing morph. Sideways, the card chases the finger through a tracking spring, pinning at the screen edge. A release short of the dismiss threshold springs back. Sheets shown without `morphFrom` keep their plain slide-away unchanged.
+- **Scroll-to-minimize for `GlassTabBar.minimizable` (#228):** A new `GlassTabBarMinimizeController` drives the minimize from scrolling — the Flutter equivalent of SwiftUI's `.tabBarMinimizeBehavior(_:)`. `GlassBarMinimizeBehavior` mirrors Apple's enum case for case. The trigger is accumulated distance, not a per-frame delta — fixing the 1.0.0 ProMotion 120 Hz reliability issue.
+
+## Bug Fixes
+
+- **Spring reversals no longer stall (#228):** `SearchableBottomBarController.makeSpring` now carries in-flight velocity through retargets; reversing mid-morph no longer reads as a stall followed by a restart. Also benefits `GlassTabBar.searchable`.
+- **Shared `ScrollController` crash fixed (#228):** The searchable and minimizable placements reading `ScrollController.position` now safely guard when multiple scroll views share one controller during transitions.
+- **Premium glass shape no longer stranded during swipe-dismiss (#229):** `RenderLiquidGlassLayer` froze shader UVs under any uniform scale-down, which was correct for the CupertinoSheet push-back but wrong for a swiped `GlassModalSheet` whose backdrop holds still. A new internal `LiquidGlassSelfScaleScope` lets the sheet declare which arrangement it is; the push-back path is unchanged.
+
+## Improvements
+
+- **`GlassNavActionSlot.crossFades` — documented widget-equality behaviour:** Cross-fade detection uses reference equality; `const` icon widgets share an instance across routes and never trigger a spurious cross-fade. Documented in the API dartdocs and the navigation guide.
+- **Multiple `GlassBarItem.menu` in one cluster — debug warning:** Using more than one menu item in a single cluster silently treated the extras as plain icons. A debug-mode `debugPrint` now surfaces this so developers see the constraint immediately rather than wondering why a second menu does not open.
+- **`GlassModalSheet` fling velocity carried into the closing morph (#227):** A fast swipe no longer stalls at the release point — the closing droplet now starts at the speed the fling was running at rather than from rest.
+
+## Documentation
+
+- **`GlassModalSheet.peekSize` docs:** Clarified that `peekSize` accepts both absolute pixels (`> 1.0`) and a screen-height fraction (`≤ 1.0`), consistent with `halfSize` and `fullSize`.
+- **New guide:** `docs/GLASS_NAVIGATION_TRANSITION.md` — setup (including `.router`), matching rules, a behaviour table, a direction section, and known limitations.
+- **`ROADMAP.md`** — `GlassNavigationTransition` checked off; the "pinning becomes the default" trajectory and parity work recorded.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the navigation transition, modal sheet, tab bar scroll-to-minimize, and premium renderer fix improvements (#221, #223, #227, #228, #230).
+
+---
+
+# 1.0.0
+
+## Major Milestone: General Availability
+
+This release marks the **1.0.0 General Availability** of `liquid_glass_widgets`, delivering a stable, unified API surface, zero third-party dependencies, and production-grade iOS 26-style liquid glass with hardware-adaptive quality tiers (Metal, Vulkan, Skia, and shader-free fallbacks) across all supported Flutter platforms.
+
+### New Features
+
+- **`GlassTabBar.minimizable()` — SwiftUI `tabBarMinimizeBehavior` parity (#217):** A new named constructor that collapses the tab bar to a single selected-tab circle without requiring a search bar. `minimized` replaces `isSearchActive`, `onMinimizedTabTap` handles the restore tap, `minimizedBarHeight` shrinks both pills while minimized, and an optional `GlassTabBarTrailingButton` fills the trailing slot — exactly modelling `Tab(role: .search)` priority-visibility behaviour. Scroll-driven minimize is caller-controlled, matching the SwiftUI `.onScrollDown` pattern.
+- **`GlassSearchBarConfig.showPill` (#217):** A new boolean on `GlassSearchBarConfig` (default `true`) that removes the search pill entirely and returns its width to the tab pill. Hiding is done by unmounting the pill and spring-scaling it at its slot — `Opacity` and zero-width leave a glass remnant fused to the tab pill on the shared blend layer; only absence can hide a grouped glass surface.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the contribution (#217).
+
+- **`GlassModalSheet` morphs from a trigger button (#219):** `show()` gains `morphFrom` — the `GlassMorphAnchor` from a new `GlassMorphTrigger` wrapper — presenting the sheet with the iOS 26 liquid morph instead of the slide-up: the trigger empties, a glass droplet detaches and inflates as it travels, and lands as the sheet. Makes the sheet the second consumer of the Liquid Morph Engine after `GlassMenu`. `morphSpeed` tunes the spring.
+- **`GlassMorphTrigger` / `GlassMorphAnchor` (#219):** The wrapper owns the trigger's key and opacity so the trigger can empty itself for the morph and take the closing bounce on its own ticker. `morphFromRect` remains for triggers that can't be wrapped, blooming from a point. The morph degrades gracefully to the slide presentation on Skia/web, `GlassQuality.minimal`, and `platformViewBackdrop`.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the contribution (#219).
+
+### Breaking Changes & API Unification
+
+- **Unified Navigation Surface (`GlassTabBar`)**:
+  - Consolidated bottom navigation into `GlassTabBar` via named constructors: `GlassTabBar.bottom()`, `GlassTabBar.searchable()`, and `GlassTabBar.inline()`.
+  - Removed legacy transitional shims `GlassBottomBar` and `GlassSearchableBottomBar`.
+  - Tab items are now canonically represented by `GlassTab` across all tab bars.
+  - Tab bar collapse types `GlassTabBarCollapseConfig` and `GlassTabBarCollapseDirection` have been **removed**. The collapse-to-extra-button pattern is not an iOS 26 design primitive and was unreliable on 120 Hz ProMotion displays. Use `GlassTabBar.minimizable` instead — it directly mirrors SwiftUI's `tabBarMinimizeBehavior(.onScrollDown)` with spring physics.
+- **Modal Sheet Simplification**:
+  - Removed deprecated `enablePeek` parameter from `GlassModalSheet`, `GlassModalSheet.show()`, and `GlassModalSheetScaffold`. Sizing and peeking behavior is now governed cleanly and declaratively by `detents` and `mode`.
+- **Initialization & Setup Cleanup**:
+  - Removed deprecated `respectsAccessibility` from `LiquidGlassWidgets.initialize()`. System accessibility preferences (Reduce Motion, Reduce Transparency) are now automatically detected and respected out of the box.
+  - Removed deprecated `warmUpImpellerPipeline` from `LiquidGlassWidgets.initialize()`. Shader bytecode preloading is handled asynchronously and safely during app bootstrap.
+- **Shader Quality & Scope Purge**:
+  - Removed deprecated `usesBackdropFilter` getter from `GlassQuality`.
+  - Removed deprecated `LiquidGlassScope.stack`, `GlassRefractionSource`, and `LiquidGlassBackground` in favor of `GlassPage` and `GlassBackgroundSource`.
+  - Removed deprecated `GlassBackdropScope` stub.
+
+### Documentation & Tooling
+
+- Added comprehensive [Migration Guide](docs/MIGRATION_0.x_TO_1.0.md) detailing step-by-step code upgrades for 0.x projects.
+- Updated documentation and all example demo screens for 1.0.0 APIs.
+
+---
+
 # 0.30.2
 
 ## Bug Fixes

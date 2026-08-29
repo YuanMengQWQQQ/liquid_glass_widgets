@@ -14,12 +14,14 @@ import 'package:liquid_glass_widgets_example/demos/glass_modal_sheet_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/video_player_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/text_field_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/bottom_bar_tab_width_demo.dart';
-import 'package:liquid_glass_widgets_example/demos/collapse_bar_demo.dart';
+import 'package:liquid_glass_widgets_example/demos/minimizable_bar_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/buttons_and_shadows_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/content_aware_brightness_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/indicator_parity_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/rtl_layout_demo.dart';
 import 'package:liquid_glass_widgets_example/demos/meniscus_and_blur_demo.dart';
+import 'package:liquid_glass_widgets_example/demos/materialize_demo.dart';
+import 'package:liquid_glass_widgets_example/demos/scroll_edge_style_demo.dart';
 
 import 'package:liquid_glass_widgets_example/demos/google_maps_demo.dart'
     show PlatformViewDemo;
@@ -81,7 +83,9 @@ class _AppleLiquidGlassShowcaseAppState
           data: isDark
               ? ThemeData.dark(useMaterial3: true)
               : ThemeData.light(useMaterial3: true),
-          child: child!,
+          // Hosts pinned nav-bar chrome (back button + actions) above the
+          // Navigator so it stays put while pages slide during push/pop.
+          child: GlassNavigationShell(child: child!),
         ),
         home: const ShowcaseHomePage(),
         debugShowCheckedModeBanner: false,
@@ -792,18 +796,9 @@ class _ExamplesTab extends StatelessWidget {
                   ),
                   SizedBox(height: 14),
 
-                  // Row 4: Collapse Bar
+                  // Row 4: Quality Tiers (full width — Collapse Bar removed in v1.0.0)
                   Row(
                     children: [
-                      Expanded(
-                        child: _SmallDemoCard(
-                          title: 'Collapse Bar',
-                          icon: CupertinoIcons.arrow_down_right_circle_fill,
-                          color: const Color(0xFF30D158),
-                          destination: const CollapseBarDemoPage(),
-                        ),
-                      ),
-                      SizedBox(width: 14),
                       Expanded(
                         child: _SmallDemoCard(
                           title: 'Quality Tiers',
@@ -813,6 +808,45 @@ class _ExamplesTab extends StatelessWidget {
                         ),
                       ),
                     ],
+                  ),
+                  SizedBox(height: 14),
+
+                  _LargeDemoCard(
+                    title: 'Materialize',
+                    subtitle:
+                        'glassEffectTransition(.materialize) — entrance & exit',
+                    icon: CupertinoIcons.sparkles,
+                    gradient: const [
+                      Color(0xFF1B2A4A),
+                      Color(0xFF7B2D5E),
+                    ],
+                    destination: const MaterializeDemo(),
+                  ),
+                  SizedBox(height: 14),
+
+                  _LargeDemoCard(
+                    title: 'Scroll Edge Effect',
+                    subtitle:
+                        'blur · soft · hard — live style switcher + maxSigma tuner',
+                    icon: CupertinoIcons.arrow_up_to_line,
+                    gradient: const [
+                      Color(0xFF003566),
+                      Color(0xFF0096C7),
+                    ],
+                    destination: const ScrollEdgeStyleDemo(),
+                  ),
+                  SizedBox(height: 14),
+
+                  _LargeDemoCard(
+                    title: 'Minimizable Bar',
+                    subtitle:
+                        'tabBarMinimizeBehavior — minimizes as you scroll',
+                    icon: CupertinoIcons.arrow_down_to_line_alt,
+                    gradient: const [
+                      Color(0xFF0A2342),
+                      Color(0xFF0A84FF),
+                    ],
+                    destination: const MinimizableBarDemo(),
                   ),
                   SizedBox(height: 14),
 

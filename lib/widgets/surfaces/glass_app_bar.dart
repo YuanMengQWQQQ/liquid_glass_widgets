@@ -4,8 +4,12 @@ import 'package:flutter/cupertino.dart';
 
 import '../../src/renderer/liquid_glass_renderer.dart';
 import '../../types/glass_quality.dart';
+import '../interactive/glass_button.dart';
 import '../shared/glass_isolation_scope.dart';
+import 'glass_bar_item.dart';
 import 'glass_large_title.dart' show GlassLargeTitleController;
+import 'glass_navigation_shell.dart';
+import 'glass_pinned_bar_chrome.dart';
 
 /// A navigation bar layout widget following Apple's iOS 26 design patterns.
 ///
@@ -81,11 +85,16 @@ import 'glass_large_title.dart' show GlassLargeTitleController;
 /// [Scaffold.appBar] and [CupertinoPageScaffold.navigationBar].
 class GlassAppBar extends StatelessWidget
     implements ObstructingPreferredSizeWidget {
-  /// Creates a glass app bar.
+  /// Creates a glass app bar with widget-based [leading] and [actions].
   ///
   /// The bar itself is a simple layout container with a [backgroundColor].
   /// Glass effects are rendered by individual child widgets (e.g. [GlassButton])
   /// inside the bar — not by the bar surface.
+  ///
+  /// A bar built this way never participates in navigation pinning: its
+  /// widgets live in the route and slide with the page. Use
+  /// [GlassAppBar.pinned] for the iOS 26 behaviour where the back button and
+  /// actions stay put across route transitions.
   const GlassAppBar({
     super.key,
     this.title,
@@ -99,7 +108,58 @@ class GlassAppBar extends StatelessWidget
     this.buttonSettings,
     this.largeTitleController,
     this.bottom,
-  });
+  })  : pinnedActions = null,
+        pinnedLeading = const <GlassBarItem>[],
+        pinnedBackButton = true,
+        pinnedLeadingItemsSupplementBackButton = false,
+        onBack = null;
+
+  /// Creates a glass app bar whose chrome pins above the [Navigator].
+  ///
+  /// Inside a [GlassNavigationShell], the automatic back button and the
+  /// [actions] capsule stay put while the page slides during push and pop,
+  /// morphing in place into the next route's items — the iOS 26 navigation
+  /// bar behaviour. Without a shell (or where the effect cannot render) the
+  /// same items render inside this bar, so screens work either way.
+  ///
+  /// [leading] and [actions] are declared as data ([GlassBarItem]), mirroring
+  /// `UIBarButtonItem` — there is no widget-based `leading`/`actions` in this
+  /// mode, because arbitrary widgets cannot be hoisted to the shell. Items
+  /// sharing an id across routes morph as the same item; see
+  /// [GlassBarItem.icon].
+  ///
+  /// The back button appears whenever the route can be popped and never on a
+  /// root route. A non-empty [leading] **replaces** it — UIKit's rule for
+  /// `leftBarButtonItems`, and Flutter's for [AppBar.leading], which implies a
+  /// leading only when none was given. Set
+  /// [leadingItemsSupplementBackButton] to show both, mirroring
+  /// `UINavigationItem.leftItemsSupplementBackButton`. Set [backButton] to
+  /// false to suppress the back button outright, and [onBack] to replace its
+  /// default `Navigator.maybePop()` — for example with go_router's
+  /// `context.pop()`.
+  const GlassAppBar.pinned({
+    super.key,
+    this.title,
+    List<GlassBarItem> leading = const [],
+    List<GlassBarItem> actions = const [],
+    bool backButton = true,
+    bool leadingItemsSupplementBackButton = false,
+    this.onBack,
+    this.centerTitle = true,
+    // Whitelisted: Structural transparent default, not a Material colour.
+    this.backgroundColor = const Color(0x00000000),
+    this.toolbarHeight = 44.0,
+    this.padding = const EdgeInsets.symmetric(horizontal: 8),
+    this.buttonSettings,
+    this.largeTitleController,
+    this.bottom,
+  })  : pinnedActions = actions,
+        pinnedLeading = leading,
+        pinnedBackButton = backButton,
+        pinnedLeadingItemsSupplementBackButton =
+            leadingItemsSupplementBackButton,
+        leading = null,
+        actions = null;
 
   // ===========================================================================
   // Properties
@@ -136,6 +196,49 @@ class GlassAppBar extends StatelessWidget
   ///
   /// When non-null, [preferredSize] is `toolbarHeight + bottom.preferredSize.height`.
   final PreferredSizeWidget? bottom;
+
+  /// Trailing bar items declared as data, pinned above the [Navigator] by an
+  /// enclosing [GlassNavigationShell].
+  ///
+  /// Set by [GlassAppBar.pinned] (its `actions` parameter, defaulting to
+  /// empty) and always null for the widget-based constructor — the
+  /// constructor choice is what decides whether the bar participates in
+  /// pinning. When a shell is present these items stay put during push and
+  /// pop while the page slides beneath them, morphing in place into the next
+  /// route's items; without a shell they render inside this bar as a normal
+  /// glass capsule.
+  final List<GlassBarItem>? pinnedActions;
+
+  /// Leading bar items declared as data, pinned above the [Navigator] by an
+  /// enclosing [GlassNavigationShell].
+  ///
+  /// Set by [GlassAppBar.pinned] (its `leading` parameter, defaulting to
+  /// empty); always empty on the plain constructor, which uses the
+  /// widget-based [leading] instead.
+  final List<GlassBarItem> pinnedLeading;
+
+  /// Whether a [GlassAppBar.pinned] bar shows the automatic back button when
+  /// the route can be popped.
+  ///
+  /// The button is never shown on a root route, matching
+  /// [ModalRoute.impliesAppBarDismissal], and a non-empty [pinnedLeading]
+  /// replaces it unless [pinnedLeadingItemsSupplementBackButton] is set.
+  final bool pinnedBackButton;
+
+  /// Whether [pinnedLeading] appears in addition to the automatic back button
+  /// rather than instead of it.
+  ///
+  /// Mirrors `UINavigationItem.leftItemsSupplementBackButton`, which is
+  /// likewise false by default.
+  final bool pinnedLeadingItemsSupplementBackButton;
+
+  /// Overrides the automatic back button's action on a [GlassAppBar.pinned]
+  /// bar.
+  ///
+  /// Defaults to `Navigator.maybePop`, which routers built on the Pages API
+  /// (go_router, auto_route, beamer) handle correctly. Supply this to use a
+  /// router-specific pop instead, such as `context.pop()`.
+  final VoidCallback? onBack;
 
   /// The total preferred size of the app bar (toolbar + bottom widget).
   @override
@@ -193,6 +296,36 @@ class GlassAppBar extends StatelessWidget
 
   @override
   Widget build(BuildContext context) {
+    // Pinned items are registered with the shell, which decides whether it can
+    // host them. Until then — and whenever there is no shell — this bar draws
+    // them itself, so a screen renders correctly either way.
+    if (pinnedActions != null) {
+      return GlassPinnedBarChrome(
+        leading: pinnedLeading,
+        actions: pinnedActions!,
+        backButton: pinnedBackButton,
+        leadingItemsSupplementBackButton:
+            pinnedLeadingItemsSupplementBackButton,
+        onBack: onBack,
+        buttonSettings: buttonSettings,
+        builder: (context, chrome) => _buildBar(context, chrome: chrome),
+      );
+    }
+    return _buildBar(context);
+  }
+
+  /// Builds the bar itself.
+  ///
+  /// A pinned bar takes its slots from [chrome], which holds real buttons
+  /// until the shell has taken them and same-sized placeholders after — so the
+  /// centred title is constrained identically either way and keeps sliding
+  /// with the page. A widget-based bar uses its own [leading] and [actions].
+  Widget _buildBar(BuildContext context, {GlassPinnedBarChromeData? chrome}) {
+    final Widget? effectiveLeading = chrome == null ? leading : chrome.leading;
+    final List<Widget>? effectiveActions = chrome == null
+        ? actions
+        : (chrome.actions.isEmpty ? null : chrome.actions);
+
     final Widget toolbarRow = SafeArea(
       bottom: false,
       child: Padding(
@@ -205,22 +338,22 @@ class GlassAppBar extends StatelessWidget
               textDirection: Directionality.of(context),
             ),
             children: [
-              if (leading != null)
+              if (effectiveLeading != null)
                 LayoutId(
                   id: _ToolbarSlot.leading,
-                  child: leading!,
+                  child: effectiveLeading,
                 ),
               LayoutId(
                 id: _ToolbarSlot.title,
                 child: _buildTitle(context),
               ),
-              if (actions != null)
+              if (effectiveActions != null)
                 LayoutId(
                   id: _ToolbarSlot.actions,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     spacing: 8,
-                    children: actions!,
+                    children: effectiveActions,
                   ),
                 ),
             ],
@@ -277,6 +410,11 @@ class GlassAppBar extends StatelessWidget
         ? const SizedBox.shrink()
         : DefaultTextStyle(
             style: CupertinoTheme.of(context).textTheme.navTitleTextStyle,
+            // iOS navigation titles are a single truncated line — they never
+            // wrap, however little room the bar items leave them.
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             child: Semantics(header: true, child: title),
           );
 
