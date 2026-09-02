@@ -1204,13 +1204,6 @@ class GlassTabBar extends StatefulWidget with GlassDynamicPreferredSize {
 }
 
 class _GlassTabBarState extends State<GlassTabBar> {
-  /// The most recent non-null [GlassTabBar.trailingButton] (minimizable
-  /// only). A button removed between builds must keep rendering ITSELF while
-  /// the pill scales away — deriving the icon from the now-null button would
-  /// swap the outgoing pill to the config's default search glyph for its
-  /// last few frames.
-  GlassTabBarTrailingButton? _lastTrailingButton;
-
   @override
   void initState() {
     super.initState();
@@ -1372,50 +1365,31 @@ class _GlassTabBarState extends State<GlassTabBar> {
   }
 
   /// Dispatches to [TabBarSearchableLayout] — the iOS 26-style searchable placement engine.
-  Widget _buildSearchable(BuildContext context) =>
-      _buildSearchableEngine(context, widget.searchConfig!);
+  Widget _buildSearchable(BuildContext context) => _buildSearchableEngine(
+        context,
+        searchConfig: widget.searchConfig,
+      );
 
-  /// Dispatches to the same engine as [_buildSearchable], with a
-  /// [GlassSearchBarConfig] assembled from the minimizable placement's
-  /// navigation vocabulary: nothing search-shaped remains (the field never
-  /// expands, there is no cancel pill, no keyboard involvement), and the
-  /// search pill's slot carries the plain [GlassTabBarTrailingButton] — or,
-  /// with no button, nothing at all.
-  Widget _buildMinimizable(BuildContext context) {
-    final trailing = widget.trailingButton;
-    if (trailing != null) _lastTrailingButton = trailing;
-    // The ICON comes from the last known button, so a button removed this
-    // build still renders itself while the pill scales away. Existence and
-    // the tap stay on the live value — a removed button must not fire (and
-    // the disappearing pill is already IgnorePointered by the engine).
-    final rendered = trailing ?? _lastTrailingButton;
-    return _buildSearchableEngine(
-      context,
-      GlassSearchBarConfig(
-        // The engine's single callback carries both taps: `true` is the
-        // trailing pill, `false` is the minimized tab circle.
-        onSearchToggle: (activate) {
-          if (activate) {
-            widget.trailingButton?.onTap();
-          } else {
-            widget.onMinimizedTabTap?.call();
-          }
-        },
-        expandWhenActive: false,
-        showsCancelButton: false,
-        searchIcon: rendered?.icon,
-        showPill: trailing != null,
-      ),
-    );
-  }
+  /// Dispatches to [TabBarSearchableLayout] configured for minimizable placement.
+  Widget _buildMinimizable(BuildContext context) => _buildSearchableEngine(
+        context,
+        trailingButton: widget.trailingButton,
+        onMinimizedTabTap: widget.onMinimizedTabTap,
+      );
 
   Widget _buildSearchableEngine(
-      BuildContext context, GlassSearchBarConfig config) {
+    BuildContext context, {
+    GlassSearchBarConfig? searchConfig,
+    GlassTabBarTrailingButton? trailingButton,
+    VoidCallback? onMinimizedTabTap,
+  }) {
     return TabBarSearchableLayout(
       tabs: widget.tabs,
       selectedIndex: widget.selectedIndex,
       onTabSelected: widget.onTabSelected,
-      searchConfig: config,
+      searchConfig: searchConfig,
+      trailingButton: trailingButton,
+      onMinimizedTabTap: onMinimizedTabTap,
       controller: widget.controller,
       isSearchActive: widget._effectiveMinimized,
       minimizeController: widget.minimizeController,
@@ -1516,6 +1490,34 @@ class GlassTabBarTrailingButton {
 // GlassSegment — configuration for a single segment in GlassSegmentedControl
 // =============================================================================
 
+/// What a horizontal drag means on a scrollable segmented control.
+enum SegmentDragBehavior {
+  /// A drag beginning on the selected segment drags the INDICATOR from
+  /// choice to choice (the `UISegmentedControl` gesture); drags elsewhere
+  /// scroll the list. The right feel when every choice is visible.
+  selectIndicator,
+
+  /// Every drag scrolls the list — the selected segment included;
+  /// selection changes by tap only. The picker behavior: with most
+  /// choices off-screen (and especially with
+  /// [SegmentSelectionAlignment.center], which parks the selection exactly
+  /// where a scrolling thumb naturally lands), navigation is what a drag
+  /// means.
+  scroll,
+}
+
+/// Where a scrollable segmented control keeps its selected segment.
+enum SegmentSelectionAlignment {
+  /// Scroll only as far as needed for the selection to be fully visible,
+  /// with a little edge breathing room (the classic tab-bar behavior).
+  minimal,
+
+  /// Keep the selection centered in the viewport whenever possible —
+  /// clamped at the ends of the list. The picker behavior: selection lives
+  /// at the center and the choices arrange themselves around it.
+  center,
+}
+
 /// Configuration for a single segment in [GlassSegmentedControl].
 ///
 /// [GlassSegment] is the item type for [GlassSegmentedControl] — the iOS 26
@@ -1569,6 +1571,7 @@ class GlassSegment {
   const GlassSegment({
     this.icon,
     this.label,
+    this.id,
     this.tooltip,
     this.semanticLabel,
     this.enabled = true,
@@ -1588,6 +1591,15 @@ class GlassSegment {
   /// If null, [icon] is used alone. If both are provided, the icon is shown
   /// above the label (same layout as iOS `UISegmentedControl` with images).
   final String? label;
+
+  /// Stable identity for this segment across list changes.
+  ///
+  /// When the segment list is replaced (items inserted, removed, or the
+  /// list re-gridded around a surviving value), segments whose identity
+  /// survives keep their underlying elements instead of remounting — only
+  /// genuinely new cells build. Falls back to [label]; segments with
+  /// neither, or with duplicate identities, get fresh cells each time.
+  final Object? id;
 
   /// Tooltip shown on long-press (optional).
   ///
