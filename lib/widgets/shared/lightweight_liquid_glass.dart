@@ -759,7 +759,7 @@ class _RenderLightweightGlass extends RenderProxyBox
       return _cachedBlurFilter!;
     }
 
-    // Standard saturation ColorFilter matrix (ITU-R BT.601 luminance weights).
+    // Standard saturation ColorFilter matrix (ITU-R BT.709 luminance weights).
     const double rw = 0.2126, gw = 0.7152, bw = 0.0722;
     final ui.ColorFilter satFilter = ui.ColorFilter.matrix(<double>[
       rw + (1 - rw) * sat,
@@ -977,7 +977,8 @@ class _RenderLightweightGlass extends RenderProxyBox
     // This only affects the Skia/Web lightweight shader path.
     // Impeller uses a different physical model and is completely unaffected.
     final gc = _settings.effectiveGlassColor;
-    final glassLuminance = 0.299 * gc.r + 0.587 * gc.g + 0.114 * gc.b;
+    final glassLuminance =
+        0.2126 * gc.r + 0.7152 * gc.g + 0.0722 * gc.b; // ITU-R Rec.709
     final brightnessIntent = gc.a * glassLuminance * 0.6;
     final effectiveAmbient = math.max(
       _settings.effectiveAmbientStrength,
@@ -1072,5 +1073,9 @@ class _RenderLightweightGlass extends RenderProxyBox
     // Matches the uniform wired in liquid_glass_final_render.frag via uEdgeConfig.y.
     // Default 1.0 = calibrated iOS 26 baseline (0.10 * adaptiveStrength in shader).
     shader.setFloat(index++, _settings.fresnelStrength.clamp(0.0, 4.0));
+
+    // 34: uBodyMode — 0.0 = adaptive, 1.0 = clear.
+    shader.setFloat(
+        index++, _settings.bodyMode == GlassBodyMode.clear ? 1.0 : 0.0);
   }
 }

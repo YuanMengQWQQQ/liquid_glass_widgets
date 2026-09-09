@@ -38,6 +38,23 @@ enum PlatformViewGlassMode {
   passthrough,
 }
 
+/// Controls how the glass body blends color over the background.
+///
+/// Matches Apple's iOS 26 Liquid Glass material styling in Swift / UIKit:
+/// - [adaptive]: matches `Glass.regular` — adaptive luminance-preserving tint
+///   that takes the color's hue while holding the background's perceived brightness.
+/// - [clear]: matches `Glass.clear` — direct alpha-composited tint with no
+///   luminance normalization, preserving exact design token hex values while
+///   retaining specular, Fresnel, and rim physics.
+enum GlassBodyMode {
+  /// Adaptive luminance-preserving tint (default, matches Apple's Glass.regular).
+  adaptive,
+
+  /// Direct alpha-composite tint with no luminance normalization (matches Apple's Glass.clear).
+  /// Preserves exact design token hex values while retaining specular, Fresnel, and rim physics.
+  clear,
+}
+
 /// Represents the settings for a liquid glass effect.
 class LiquidGlassSettings {
   /// Creates a new [LiquidGlassSettings] with the given settings.
@@ -71,6 +88,7 @@ class LiquidGlassSettings {
     this.backerColor,
     this.platformViewFallbackColor,
     this.platformViewMode = PlatformViewGlassMode.fallbackColor,
+    this.bodyMode = GlassBodyMode.adaptive,
   }) : pinchStrength = 0.0;
 
   /// Private constructor used exclusively by [copyWithPinch].
@@ -102,6 +120,7 @@ class LiquidGlassSettings {
     this.backerColor,
     this.platformViewFallbackColor,
     this.platformViewMode = PlatformViewGlassMode.fallbackColor,
+    this.bodyMode = GlassBodyMode.adaptive,
     required this.pinchStrength,
   });
 
@@ -162,6 +181,28 @@ class LiquidGlassSettings {
   /// The color tint of the glass effect.
   ///
   /// Opacity defines the intensity of the tint.
+  ///
+  /// **How the color is applied (Standard & Premium quality):**
+  /// The shader uses a luminance-preserving tint (`applyGlassColorLW`): it takes
+  /// your color's hue but holds the background's perceived brightness, preventing
+  /// the glass from darkening or muddying the scene behind it. This means the
+  /// rendered color will differ from the raw [Color] value — the shift is
+  /// intentional optical glass behaviour, not a bug.
+  ///
+  /// **If you need a pixel-accurate, unmodified color overlay** with no luminance
+  /// normalization or chromatic drift across any quality tier (including [GlassQuality.premium]
+  /// and [GlassQuality.standard]), set [bodyMode] to [GlassBodyMode.clear]:
+  ///
+  /// ```dart
+  /// LiquidGlassSettings(
+  ///   bodyMode: GlassBodyMode.clear,
+  ///   blur: 0,
+  ///   glassColor: Color(0xD9C3E0F5),
+  /// )
+  /// ```
+  ///
+  /// In clear mode, the body tint is composited with exact alpha blending while
+  /// still preserving specular highlights, Fresnel sheen, and 3D meniscus edge refraction.
   final Color glassColor;
 
   /// The effective glass color taking visibility into account.
@@ -176,11 +217,20 @@ class LiquidGlassSettings {
   /// The effective thickness taking visibility into account.
   double get effectiveThickness => thickness * visibility;
 
-  /// The blur of the glass effect.
+  /// The blur (frost) radius of the glass effect.
   ///
   /// Higher values create a more frosted appearance.
   ///
   /// Defaults to 0.
+  ///
+  /// **`blur: 0` means clear optical glass, not a flat color fill.**
+  /// At `blur: 0` the blur pass is skipped, but the surface retains its glass
+  /// characteristics — specular rim highlight, Fresnel edge brightening, and
+  /// sub-pixel edge refraction. This matches iOS 26 clear glass where zero frost
+  /// still looks like a crystal pane, not a plain translucent container.
+  ///
+  /// To get a completely flat, shader-free color overlay (no optical effects at
+  /// all), use [GlassQuality.minimal] instead of relying on `blur: 0`.
   final double blur;
 
   /// The effective blur taking visibility into account.
@@ -442,6 +492,7 @@ class LiquidGlassSettings {
         backerColor: backerColor,
         platformViewFallbackColor: platformViewFallbackColor,
         platformViewMode: platformViewMode,
+        bodyMode: bodyMode,
         pinchStrength: value,
       );
 
@@ -494,6 +545,13 @@ class LiquidGlassSettings {
   /// Defaults to [PlatformViewGlassMode.fallbackColor], which is the existing
   /// behaviour, so this changes nothing unless it is asked for.
   final PlatformViewGlassMode platformViewMode;
+
+  /// How the glass body blends color over the background.
+  ///
+  /// Defaults to [GlassBodyMode.adaptive], which matches Apple's `Glass.regular`
+  /// (luminance-preserving tint). Set to [GlassBodyMode.clear] to match Apple's
+  /// `Glass.clear` (direct alpha-composite tint without luminance normalization).
+  final GlassBodyMode bodyMode;
 
   /// The effective saturation taking visibility into account.
   double get effectiveSaturation => 1 + (saturation - 1) * visibility;
@@ -548,6 +606,7 @@ class LiquidGlassSettings {
         // A mode is not interpolable: it switches at the midpoint like any
         // other enum in this class.
         platformViewMode: t < 0.5 ? a.platformViewMode : b.platformViewMode,
+        bodyMode: t < 0.5 ? a.bodyMode : b.bodyMode,
         // pinchStrength is interaction state — lerp it so transitions are smooth
         // when the indicator fades between active/resting states.
         pinchStrength: lerpDouble(a.pinchStrength, b.pinchStrength, t)!);
@@ -587,6 +646,7 @@ class LiquidGlassSettings {
     Color? backerColor,
     Color? platformViewFallbackColor,
     PlatformViewGlassMode? platformViewMode,
+    GlassBodyMode? bodyMode,
   }) =>
       LiquidGlassSettings._withPinch(
         visibility: visibility ?? this.visibility,
@@ -614,6 +674,7 @@ class LiquidGlassSettings {
         platformViewFallbackColor:
             platformViewFallbackColor ?? this.platformViewFallbackColor,
         platformViewMode: platformViewMode ?? this.platformViewMode,
+        bodyMode: bodyMode ?? this.bodyMode,
         pinchStrength: pinchStrength,
       );
 
@@ -645,6 +706,7 @@ class LiquidGlassSettings {
         other.backerColor == backerColor &&
         other.platformViewFallbackColor == platformViewFallbackColor &&
         other.platformViewMode == platformViewMode &&
+        other.bodyMode == bodyMode &&
         other.pinchStrength == pinchStrength;
   }
 
@@ -673,6 +735,7 @@ class LiquidGlassSettings {
         backerColor,
         platformViewFallbackColor,
         platformViewMode,
+        bodyMode,
         pinchStrength,
       ]);
 }

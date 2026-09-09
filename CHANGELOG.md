@@ -1,3 +1,169 @@
+# 1.4.2
+
+## Bug Fixes
+
+- **Custom bar items that draw their own glass no longer flash across a push or pop (#296):** The pinned chrome fades and blurs item content by painting it under opacity and image-filter layers, and a glass surface painted under either has no backdrop to sample — a `GlassBarItem.custom` carrying its own `GlassButton.custom` capsule rendered as its opaque backer for the whole transition and snapped to glass on the last frame. `GlassBarItemBackground.own` marks such an item, and the cluster dissolves it through the surface's own visibility instead.
+
+- **Pinned clusters now dissolve across a push or pop instead of popping in and out:** `GlassMenu` wraps its trigger in a resting `GlassMaterializeScope` so the trigger can fade under an open menu, and every pinned cluster sits inside that wrapper — so the materialize the shell runs around a cluster only one route has never reached the glass. The outgoing shell stayed solid until it was dropped, the incoming one appeared solid, and for a few frames both were drawn. The menu's scope now composes with an enclosing one.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the fix (#297).
+
+- **Dismissible modal sheets retain their frame below the lowest enabled detent (#298):** Sheets without a small detent no longer jump to peek width, margins, or corners during dismissal. Large-only sheets slide away with their full frame; medium+large sheets preserve the medium frame below that detent.
+
+Thanks to [@hank205](https://github.com/hank205) for the fix (#299).
+
+- **Menu & Popover dismissal during page transitions and declarative navigation (#274):**
+  - **Zero Transition Overlap**: Replaced `OverlayChildLocation.rootOverlay` with `OverlayChildLocation.nearestOverlay` in both `GlassMenu` and `GlassPopover`. In addition, trigger position is now calculated locally relative to `nearestOverlay` (`renderBox.localToGlobal(Offset.zero, ancestor: overlayBox)`), preventing menu positioning drift in nested layouts while ensuring the menu lives in the same overlay stack as its route. As a result, incoming pushed routes render in front of closing menus instead of allowing the menu and its glass blur to float above the incoming page.
+  - **Declarative Navigation Safety (`go_router` / `Navigator.pages`)**: Immediate route dismissal calls that fire during Flutter's persistent callbacks phase (`SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks`) are now deferred to post-frame callbacks via `SchedulerBinding.instance.addPostFrameCallback`. This completely eliminates the `SchedulerBinding.instance.schedulerPhase != SchedulerPhase.persistentCallbacks` assertion crash when updating pages in declarative routers.
+  - **Standalone Navigation Demo**: Added `GlassMenuNavigationDemoPage` (`example/lib/demos/glass_menu_navigation_demo.dart`) providing an interactive demonstration of clean overlay dismissal across imperative, declarative (`go_router`), and nested tab navigator setups with slow-motion transition controls.
+
+## Calibration
+
+- **Corrected luminance weights to ITU-R Rec.709 across all rendering paths:** All
+  shader and Dart-side luminance computations now use `0.2126 R / 0.7152 G / 0.0722 B`
+  (the standard for sRGB and Display P3) instead of the legacy BT.601 SDTV coefficients
+  that were previously in use. The correction is most visible on blue- and cyan-heavy
+  backgrounds where BT.601 measurably overestimated perceived brightness.
+
+# 1.4.1
+
+## Bug Fixes
+
+- **`GlassNavigationShell` no longer marks its chrome dirty mid-build (#293):** The shell listens to every registered route's animations and re-resolved the pinned chrome synchronously on each tick. A page-based `Navigator` applies its pages inside `didUpdateWidget` — the build phase — and a route with no transition completes its animation right there, so the tick landed as `setState() or markNeedsBuild() called during build` on the chrome's `ListenableBuilder` for every such push and pop, and the chrome missed that frame. Ticks now defer past build the way status changes already did.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the fix (#294).
+
+- **`GlassScaffold` dark mode stuck white in `MaterialApp` (#289):** `GlassScaffold` now scopes its internal `CupertinoTheme` and `GlassStatusBarStyle.auto` icon style through `GlassTheme.brightnessOf`. This correctly honours `ThemeMode.dark` / `.light` even when the device OS brightness differs from the app theme.
+
+- **Menu and popover dismissal across nested Navigators (#274):** `GlassMenu` and `GlassPopover` now listen to transitions across all ancestor `ModalRoute`s up to the root. When navigation occurs on an enclosing shell or root `Navigator`, the overlay dismisses immediately instead of lingering over the incoming destination page.
+
+Thanks to [@Vincen-dev](https://github.com/Vincen-dev) for the reproduction and test (#274).
+
+# 1.4.0
+
+## Features
+
+- **`GlassBodyMode` (`adaptive` vs `clear`) — exact design token color fidelity (#269):**
+  Introduced `GlassBodyMode` enum and `bodyMode` property on `LiquidGlassSettings` (defaulting to `GlassBodyMode.adaptive`), achieving 1:1 parity with Apple iOS 26 Liquid Glass `Glass.regular` vs `Glass.clear`.
+  - `GlassBodyMode.adaptive` (default): Employs iOS 26 dynamic luminosity normalization, ambient tint modulation, and brightness compensation based on underlying backdrop luminance.
+  - `GlassBodyMode.clear`: Bypasses luminosity normalization, white-point lift, and content-adaptive modulation. Directly composites the designer's exact hex color and alpha from `glassColor` over the refracted scene while preserving all 3D optical properties (specular rim reflections, Fresnel edge glow, meniscus edge absorption, and surface refraction).
+  - Perfectly resolves color fidelity when `blur: 0` is combined with custom tinted glass surfaces.
+  - Fully integrated across all shader tiers (Impeller `liquid_glass_final_render.frag`, standard `lightweight_glass.frag`, and Skia `_FrostedFallback`).
+
+- **Decoupled track background quality in `GlassTabBar`:**
+  Added `backgroundQuality: GlassQuality?` across `GlassTabBar.bottom`, `GlassTabBar.inline`, `GlassTabBar.searchable`, and `GlassTabBar.minimizable`.
+  - Directly matches UIKit's `UITabBarAppearance.backgroundEffect` decoupling from the active selection capsule.
+  - Allows tab bar containers to render with lightweight frosted glass (e.g., `backgroundQuality: GlassQuality.minimal` or `.standard`) while the moving selection pill retains full liquid refraction (`quality: GlassQuality.premium`).
+  - Defaults to `null`, which seamlessly inherits from `quality` without any visual regression.
+
+- **`GlassTabBarTrailingButton.menu` and `GlassTabBarExtraButton.menu` — native pull-down menus from tab bars (#275):** Both the trailing pill on `GlassTabBar.minimizable` and the extra action button on `GlassTabBar.bottom` and `GlassTabBar.searchable` now support an optional `GlassMenu` pull-down, using the same `.menu` named-constructor pattern established by `GlassButtonGroupItem.menu` and `GlassBarItem.menu`.
+
+  ```dart
+  // Minimizable trailing pill → opens a menu on tap
+  GlassTabBarTrailingButton.menu(
+    icon: const Icon(CupertinoIcons.ellipsis_circle),
+    label: 'More',
+    menuItems: [
+      GlassMenuItem(label: 'Edit', onTap: _edit),
+      GlassMenuItem(label: 'Share', onTap: _share),
+    ],
+  )
+
+  // Bottom-bar extra button → opens a menu on tap
+  GlassTabBarExtraButton.menu(
+    icon: const Icon(CupertinoIcons.plus),
+    label: 'New',
+    menuItems: [
+      GlassMenuItem(label: 'New Note', onTap: _newNote),
+      GlassMenuDivider(),
+      GlassMenuItem(label: 'Import', onTap: _import),
+    ],
+  )
+  ```
+
+  - **Liquid spring origin:** The menu expansion spring originates from the button's actual render coordinates — identical behaviour to `GlassBarItem.menu` and `UIBarButtonItem(image:menu:)` in SwiftUI.
+  - **Auto-upward expansion:** `autoAdjustToScreen: true` is always applied, so menus anchored inside a bottom bar always expand upward, matching the iOS 26 Liquid Glass `UIMenu` behaviour on toolbar items.
+  - **`enabled` toggle:** Setting `enabled: false` on either constructor dims the button and suppresses the menu — consistent with the existing tap-callback variant.
+  - **Accessibility:** Both triggers are wrapped in a `Semantics` node using the required `label` so screen readers announce the control correctly.
+  - **API surface:**
+    - `GlassTabBarTrailingButton` gains: `menuItems`, `menuAlignment`, `menuWidth`, `label`, `enabled`.
+    - `GlassTabBarExtraButton` gains: `menuItems`, `menuAlignment`, `menuWidth`. The `label` and `enabled` fields were already present.
+    - The `isMenu` getter on both classes returns true when the menu variant is active.
+  - **No scope creep:** Direct pass-through of arbitrary widget trees to the trigger position is explicitly deferred; use `GlassMenu.triggerBuilder` directly for fully custom triggers.
+
+  Thanks to [@JoetineY](https://github.com/JoetineY) for the feature request (#275).
+
+- **`GlassModalSheet` drag indicator geometry (#288):** `dragIndicatorHeight` (default 4) and `dragIndicatorTopPadding` (default 8) join `dragIndicatorWidth`, so a sheet can match a host's own pill. Apple's own apps vary the pill's thickness, width and inset from sheet to sheet, and sit it higher where a control row follows (Maps), so there is no one right value to bake in; the defaults are unchanged.
+
+  Thanks to [@jfhair](https://github.com/jfhair) for the feature (#288).
+
+## Bug Fixes
+
+- **Color configuration is uncertain when blur=0 (#269):** When developers configured custom tint colors with `blur: 0`, the surface previously suffered from unexpected luminance and saturation drift because the shader applied adaptive ambient and light calculations intended for blurred glass. Developers can now set `bodyMode: GlassBodyMode.clear` on `LiquidGlassSettings` to bypass adaptive tinting and composite the exact designer hex color while maintaining specular highlights, Fresnel sheen, and 3D meniscus edge refraction.
+
+Thanks to [@JoetineY](https://github.com/JoetineY) for the bug report (#269).
+
+- **Minimized bar keeps the selected tab's icon colour (#279):** On `GlassTabBar.minimizable`, the minimized pill drew the selected tab's icon in `unselectedIconColor`, so a custom `selectedIconColor` dropped out on minimize and returned on expand. The pill now uses `selectedIconColor`, as the native bar does — the tab is still selected, only the bar has shrunk. `GlassTabBar.searchable` is unchanged: its collapsed pill shows the tab search was opened from, which is no longer the selected one.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the fix (#280).
+
+- **`GlassScrollEdgeStyle.blur` stays on its own route (#278):** The progressive blur is a backdrop filter, and left unclipped a backdrop filter frosts everything beneath it up to the nearest ancestor clip — under a Cupertino pop that included the route being revealed, which showed the outgoing screen's top and bottom bands until the transition settled. The shader path lost its `ClipRect` when the region moved to paint time in 0.30.1; it is back, so a `ProgressiveBlur` now frosts nothing outside its own rectangle wherever it sits.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the fix and on-device integration tests (#281).
+
+- **`GlassAppBar` title alignment (#282):** Left-aligned titles (`centerTitle: false`) no longer add an unintended 8 px start gap when no leading widget is present, correctly aligning with content padding.
+
+Thanks to [@Vincen-dev](https://github.com/Vincen-dev) for the bug report and reproduction test (#282).
+
+- **Menu and popover dismiss instantly on route navigation (#274):** When an item or action navigates to another page, `GlassMenu` and `GlassPopover` dismiss immediately instead of playing the close spring across the destination route transition.
+
+Thanks to [@Vincen-dev](https://github.com/Vincen-dev) for the bug report (#274).
+
+- **`GlassModalSheet` finishes its travel when a drag hands over to the content (#284):** An upward content drag hands the pointer to the scroll view once the sheet is within 5% of its top detent, and that pointer's release is a scroll, not a drag — so the sheet parked up to 5% short of the top with no `onStateChanged`, the host still believed it sat at the lower detent, and the next collapse skipped its scroll-to-top. The sheet now snaps the remainder at the moment of handover: it arrives, reports `full` and gives its haptic as the content starts to scroll, not when the finger eventually lifts.
+
+Thanks to [@jfhair](https://github.com/jfhair) for the fix (#284).
+
+- **`GlassModalSheetController.progress` and `value` are current inside `progressListenable` (#285):** Both reported the position the sheet had last *built* at, and the listener fires before that build — a frame behind, so the final tick of any drag never showed where the sheet stopped. They now refresh on every controller tick, before listeners run.
+
+Thanks to [@jfhair](https://github.com/jfhair) for the fix (#285).
+
+- **`GlassModalSheet` drags after a background launch (#290):** The sheet read the window size once, in its first post-frame callback, and re-read it only on a change *from* a non-zero size. An app the system launches in the background for a push builds against a 0×0 window, so a sheet created then kept the zero for life: when the app came to the foreground, its first drag divided by that zero and parked the sheet at infinity — nothing painted, no `onStateChanged`, and every later `snapToState` starting from infinity — until the process was killed. The size is now taken from the view whenever the cache still holds that zero and refreshed on every window-size change, and a drag on a window with no size is ignored.
+
+Thanks to [@jfhair](https://github.com/jfhair) for the fix (#290).
+
+---
+
+# 1.3.0
+
+## Bug Fixes
+
+- **`GlassButton` presses like a native button (behaviour change) (#267):** Measured at 120 fps, the press now grows by ~17 pt on a snappy spring (`interactionScale: null`), drags stretch no more than ~5 %, and the surface combines ambient lift (`ambientBaseLight: 0.3`) with a subtle shape-clipped specular sheen (`glowRadius: null`, resolving to a wide 1.6 radius with soft sigma-16 blur). The highlight is clipped strictly to `shape` via `ShapeBorderClipper`, staying bounded within the button geometry and sweeping across grouped buttons without creating a pointy hotspot. `LiquidStretch` declares its scale through `LiquidGlassSelfScaleScope` so the release undershoot no longer freezes refraction.
+
+  > **Migration:** Pass `glowRadius: 0.0` to disable the directional sheen (pure ambient lift). Pass `interactionScale: 1.05`, `ambientBaseLight: 0.08`, or use `GlassInteractionSettings` theme-wide to customize.
+
+- **Search circle and trailing pill press like native buttons (#272, #276):** The collapsed pills now use `GlassButton`'s ~17 pt growth, tremor stretch, and ambient lift, staying round through inflation. The expanded search field follows a lengthwise drag (≈7 pt saturation) and gives a couple of points of vertical stretch, measured against Photos. `pressScale` and `ambientBaseLight` are both nullable — null means the native behaviour, a number is a fixed override.
+
+Thanks to [@JakeThomson](https://github.com/JakeThomson) for the native press implementation, `LiquidOval` corner fix, and axis-constrained expanded field stretch (#276).
+
+- **Transform tracking crash on route pop fixed (#268):** `GeometryTransformTrackingLayer.addToScene` now checks `renderObject.attached` and wraps `getTransformTo(null)` in a try-catch, preventing the `StateError` that occurred while render objects were detaching during page transitions.
+
+Thanks to [@kdbhalala](https://github.com/kdbhalala) for the fix (#268).
+
+## Performance
+
+- **O(N) Quickselect for frame timing percentiles (#268):** The Phase 3 P95 hysteresis check now uses in-place Quickselect (Hoare partition, midpoint pivot) instead of a full sort, eliminating per-evaluation heap allocations on the frame callback path.
+
+Thanks to [@kdbhalala](https://github.com/kdbhalala) for the optimisation (#268).
+
+- **Zero-allocation glow paint path (`_RenderGlassGlowLayer`):** Eliminates per-frame `Path` allocations during gesture spring animations. `_RenderGlassGlowLayer` now follows the Flutter engine's `RenderCustomClip` pattern: clip paths are cached keyed on `size`, `shouldReclip` prevents re-clipping on value-equal rebuilds, and `canvas.translate` replaces `.shift()`. Drops native path heap churn from up to 240 allocations/s on 120 Hz ProMotion displays to zero steady-state allocations during drags.
+
+## Internal
+
+- **`THIRD_PARTY_NOTICES` added (#273):** The pub.dev archive now includes full MIT copyright notices for the vendored `liquid_glass_renderer` and adapted `motor` spring utilities. README updated to link to the notices file.
+
+---
+
+
 # 1.2.3
 
 ## Bug Fixes
@@ -3612,5 +3778,4 @@ The four optional stretch-axis override parameters introduced in 0.10.3 have bee
 | `allowNegativeYStretch` | `allowNegativeY` |
 
 All four remain optional with `null` defaults (auto-inferred from menu position). Only code explicitly passing the old names needs updating.
-
 

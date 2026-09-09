@@ -332,6 +332,7 @@ class AdaptiveGlass extends StatelessWidget {
               // surfaces such as bars.
               whitenStrength: normalizedSettings.whitenStrength,
               whitenGated: normalizedSettings.whitenGated,
+              bodyMode: normalizedSettings.bodyMode,
             )
           : normalizedSettings;
 
@@ -706,10 +707,13 @@ class _FrostedFallback extends StatelessWidget {
   /// saturation = 0  → grayscale
   /// saturation = 1  → unchanged
   /// saturation > 1  → over-saturated (default glass is 1.5)
+  ///
+  /// Uses ITU-R BT.709 luma weights (corrected from BT.601 in v1.4.2).
   static List<double> _saturationMatrix(double saturation) {
-    const lumR = 0.299;
-    const lumG = 0.587;
-    const lumB = 0.114;
+    // ITU-R BT.709 / IEC 61966-2-1 (sRGB) luminance coefficients.
+    const lumR = 0.2126;
+    const lumG = 0.7152;
+    const lumB = 0.0722;
     final s = saturation;
     final inv = 1.0 - s;
     return [
@@ -745,9 +749,11 @@ class _FrostedFallback extends StatelessWidget {
         // Accessibility: boost opacity so content remains legible
         // even when Reduce Transparency removes blur on older hardware.
         ? (tint.a * 0.5 + 0.40).clamp(0.40, 0.80)
-        // Minimal (developer choice): honour the specified glass color alpha,
-        // allowing it to go up to 1.0 for solid color modes.
-        : tint.a.clamp(0.05, 1.0);
+        // Minimal (developer choice): honour the specified glass color alpha.
+        // In clear mode (GlassBodyMode.clear), allow exact alpha down to 0.0 without clamping.
+        : settings.bodyMode == GlassBodyMode.clear
+            ? tint.a.clamp(0.0, 1.0)
+            : tint.a.clamp(0.05, 1.0);
     final frostedColor = tint.withValues(alpha: frostedAlpha);
 
     final sat = settings.effectiveSaturation;
