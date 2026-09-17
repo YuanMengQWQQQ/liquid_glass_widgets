@@ -129,6 +129,7 @@ class SearchableTabIndicator extends StatefulWidget {
     this.indicatorExpansion =
         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     this.interactionGlowColor,
+    this.nativePressHighlight = false,
     this.interactionGlowRadius = 1.5,
     this.interactionGlowBlurRadius = 0,
     this.interactionGlowSpreadRadius = 0,
@@ -184,6 +185,7 @@ class SearchableTabIndicator extends StatefulWidget {
   final EdgeInsetsGeometry indicatorExpansion;
 
   final Color? interactionGlowColor;
+  final bool nativePressHighlight;
   final double interactionGlowRadius;
   final double interactionGlowBlurRadius;
   final double interactionGlowSpreadRadius;
@@ -245,13 +247,33 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
               (constraints.maxWidth - constraints.maxHeight).abs() < 2;
           final currentShape = isSquare ? const LiquidOval() : _barShape;
 
+          final nativePress = _pressesNatively(
+              widget.enableBackgroundAnimation, widget.backgroundPressScale);
+          final content = widget.collapsedLogoBuilder != null
+              ? AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  transitionBuilder: (c, a) =>
+                      FadeTransition(opacity: a, child: c),
+                  child: SizedBox.expand(
+                    key: const ValueKey('logo'),
+                    child: widget.collapsedLogoBuilder!(context),
+                  ),
+                )
+              : const SizedBox.shrink(key: ValueKey('empty'));
+
           return LiquidStretch(
-            // A null pressScale means native pills; the bar surface itself
-            // keeps its subtle default factor.
             interactionScale: widget.enableBackgroundAnimation
-                ? (widget.backgroundPressScale ?? 1.04)
+                ? (widget.backgroundPressScale ?? 1.0)
                 : 1.0,
-            stretch: 0.5,
+            // The collapsed circle presses like a native button (#272):
+            // a null pressScale resolves to the ~17 pt growth with the
+            // tremor stretch on top; a number stays a fixed factor, as
+            // on GlassButton.
+            pressGrowth: nativePress ? LiquidStretch.nativePressGrowth : null,
+            anchorStretchSettings: nativePress
+                ? AnchorStretchSettings.nativeTremor
+                : const AnchorStretchSettings(),
+            stretch: widget.platformViewBackdrop ? 0.0 : 0.5,
             resistance: 0.01,
             anchorStretch: true,
             child: GestureDetector(
@@ -261,19 +283,9 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
                 quality: widget.backgroundQuality ?? widget.quality,
                 platformViewBackdrop: widget.platformViewBackdrop,
                 shape: currentShape,
-                child: _wrapWithGlow(
-                  child: widget.collapsedLogoBuilder != null
-                      ? AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          transitionBuilder: (c, a) =>
-                              FadeTransition(opacity: a, child: c),
-                          child: SizedBox.expand(
-                            key: const ValueKey('logo'),
-                            child: widget.collapsedLogoBuilder!(context),
-                          ),
-                        )
-                      : const SizedBox.shrink(key: ValueKey('empty')),
-                ),
+                child: (nativePress && widget.nativePressHighlight)
+                    ? PressAmbientLift(child: content)
+                    : _wrapWithGlow(child: content),
               ),
             ),
           );
@@ -1099,8 +1111,43 @@ class SearchPillState extends State<SearchPill> {
 
   Widget _buildExpanded(Color iconColor, Color micColor) {
     final config = widget.config;
-    final textColor =
-        config.textColor ?? CupertinoColors.label.resolveFrom(context);
+    // Eagerly resolve any CupertinoDynamicColor against the glass brightness
+    // cascade. CupertinoColors.label.resolveFrom calls
+    // CupertinoTheme.brightnessOf, which falls through to
+    // MediaQuery.platformBrightness (OS brightness) when no explicit Cupertino
+    // theme overrides it. That produces white text on a light-mode pill when
+    // the device OS is dark but the app is forced to light. Furthermore, any
+    // caller-provided CupertinoDynamicColor passed via config.textColor or
+    // config.hintStyle must also be flattened here, otherwise CupertinoTextField
+    // will re-resolve it against OS brightness during its own build.
+    final glassBrightness = GlassTheme.brightnessOf(context);
+    Color resolveDynamicColor(Color c) {
+      if (c is CupertinoDynamicColor) {
+        return glassBrightness == Brightness.dark ? c.darkColor : c.color;
+      }
+      return c;
+    }
+
+    final rawTextColor = config.textColor ?? CupertinoColors.label;
+    final textColor = resolveDynamicColor(rawTextColor);
+
+    final effectiveTextColor = config.hintStyle?.color != null
+        ? resolveDynamicColor(config.hintStyle!.color!)
+        : textColor;
+
+    final effectiveTextStyle = (config.hintStyle ?? const TextStyle()).copyWith(
+      color: effectiveTextColor,
+      fontSize: config.hintStyle?.fontSize ?? 17,
+      fontWeight: config.hintStyle?.fontWeight ?? FontWeight.w400,
+    );
+
+    final placeholderColor = config.hintStyle?.color != null
+        ? resolveDynamicColor(config.hintStyle!.color!)
+        : iconColor;
+
+    final effectivePlaceholderStyle = (config.hintStyle ??
+            const TextStyle(fontSize: 17, fontWeight: FontWeight.w400))
+        .copyWith(color: placeholderColor);
 
     // Trailing slot priority:
     //   1. trailingBuilder — caller has full control.
@@ -1166,12 +1213,7 @@ class SearchPillState extends State<SearchPill> {
               keyboardType: config.keyboardType,
               autocorrect: config.autocorrect,
               enableSuggestions: config.enableSuggestions,
-              style: config.hintStyle ??
-                  TextStyle(
-                    color: textColor,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w400,
-                  ),
+              style: effectiveTextStyle,
               // When null, Flutter's standard cursor-color resolution
               // kicks in (textSelectionTheme → Cupertino primaryColor
               // on iOS → colorScheme.primary). Callers wanting the
@@ -1179,10 +1221,7 @@ class SearchPillState extends State<SearchPill> {
               // `cursorColor: textColor` explicitly via [config].
               cursorColor: config.cursorColor,
               placeholder: config.hintText,
-              placeholderStyle: (config.hintStyle ??
-                      const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.w400))
-                  .copyWith(color: iconColor),
+              placeholderStyle: effectivePlaceholderStyle,
               padding: EdgeInsets.zero,
               decoration: null,
             ),

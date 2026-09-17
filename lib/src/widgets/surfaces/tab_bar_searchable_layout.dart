@@ -478,6 +478,13 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
     final effectiveSettings =
         _applyWhiten(widget.settings ?? _defaultGlassSettings, isLight);
     final searching = widget.isSearchActive;
+    // The interactive buttons/pills render the even GlassButton press lift
+    // unless the glow was customised — per widget or through the theme's glowColors.
+    final themeGlowPrimary =
+        GlassThemeData.of(context).variantFor(context).glowColors?.primary;
+    final nativePressHighlight = widget.interactionGlowColor == null &&
+        themeGlowPrimary == null &&
+        widget.interactionBehavior.hasGlow;
 
     Widget barContent = TweenAnimationBuilder<double>(
       tween: Tween<double>(
@@ -659,13 +666,6 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                               .clamp(0.0, totalW);
 
                           final Widget pillChild;
-                          // The pills render the even GlassButton press lift
-                          // unless the glow was customised — per widget or
-                          // through the theme's glowColors.
-                          final nativePressHighlight =
-                              widget.interactionGlowColor == null &&
-                                  resolvedGlowColors.primary == null &&
-                                  widget.interactionBehavior.hasGlow;
                           if (widget.searchConfig != null) {
                             pillChild = SearchPill(
                               config: widget.searchConfig!,
@@ -883,6 +883,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                               passthroughOverPlatformView:
                                   widget.passthroughOverPlatformView,
                               isSearchActive: searching,
+                              nativePressHighlight: nativePressHighlight,
                               interactionGlowColor:
                                   widget.interactionBehavior.hasGlow
                                       ? effectiveInteractionGlowColor
@@ -1205,6 +1206,9 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
               glowSpreadRadius: widget.glowSpreadRadius,
               glowOpacity: widget.glowOpacity,
               onTap: null,
+              // Pointer selection stays with the indicator; this is the tap
+              // action a screen reader and the keyboard activate.
+              semanticOnTap: () => widget.onTabSelected(i),
             ),
           ),
       ],

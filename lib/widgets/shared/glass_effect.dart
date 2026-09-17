@@ -459,7 +459,7 @@ class _GlassEffectState extends State<GlassEffect>
     // used in the full-shader path. _FrostedFallback has no displacement, so
     // Clip.none would skip clipping entirely and let BackdropFilter blur the
     // full rectangular bounds (the grey-square artifact).
-    if (widget.quality == GlassQuality.minimal || avoidsRefraction) {
+    if (widget.quality == GlassQuality.minimal) {
       return AdaptiveGlass(
         shape: widget.shape,
         settings: widget.settings,
@@ -467,6 +467,25 @@ class _GlassEffectState extends State<GlassEffect>
         useOwnLayer: true,
         clipBehavior: Clip.antiAlias,
         isInteractive: true,
+        child: widget.child,
+      );
+    }
+
+    // Path A2: Nested glass vibrancy fill (avoidsRefraction: true)
+    //
+    // Triggered when an ancestor GlassContainer (or any widget that sets
+    // InheritedLiquidGlass.avoidsRefraction = true) is in the tree. A second
+    // BackdropFilter inside the parent glass surface causes Impeller GPU tile-
+    // memory thrash, missing surfaces, and visible compositor artifacts.
+    //
+    // The correct iOS 26 behaviour for nested glass is a UIVibrancyEffect-style
+    // translucent tinted fill: no refraction, no blur, but rim and specular
+    // highlights are preserved. _VibrancyFill delivers exactly this — zero GPU
+    // compositor overhead, correct on all renderers including Skia and Web.
+    if (avoidsRefraction) {
+      return AdaptiveGlass.vibrancy(
+        shape: widget.shape,
+        settings: widget.settings,
         child: widget.child,
       );
     }
@@ -953,11 +972,16 @@ class _RenderInteractiveIndicator extends RenderProxyBox {
       // compositor backdrop via a saveLayer, destroying the frosted-glass effect.
       // antiAlias creates a ClipPathLayer with no saveLayer, giving sub-pixel AA
       // on the pill edge without compositor isolation.
-      final pillPath = _shape.getOuterPath(offset & size);
+      //
+      // IMPORTANT: build the path in **local** coordinates (Offset.zero & size).
+      // PaintingContext.pushClipPath calls clipPath.shift(offset) internally, so
+      // passing `offset & size` here would shift the clip twice — placing it
+      // entirely outside the widget's screen bounds whenever offset != zero.
+      final pillPath = _shape.getOuterPath(Offset.zero & size);
       _clipPathLayerHandle.layer = context.pushClipPath(
         needsCompositing,
         offset,
-        offset & size,
+        Offset.zero & size,
         pillPath,
         (context, offset) {
           context.pushLayer(
