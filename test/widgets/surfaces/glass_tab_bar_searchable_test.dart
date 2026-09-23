@@ -653,6 +653,10 @@ void main() {
               onTabSelected: (_) {},
               isSearchActive: isSearchActive,
               interactionBehavior: interactionBehavior,
+              // An explicit radius, which is what keeps the theme's palette
+              // in play. A null radius means native mode, and native mode
+              // brings its own calibrated sheen — covered separately below.
+              interactionGlowRadius: 1.5,
               maskingQuality: MaskingQuality.off,
               searchConfig: GlassSearchBarConfig(
                 onSearchToggle: (_) {},
@@ -684,6 +688,55 @@ void main() {
       expect(match, isTrue,
           reason: 'No GlassGlow received the theme glow color $expectedColor. '
               'Found: ${glows.map((g) => g.glowColor).toList()}');
+    });
+
+    testWidgets('native mode brings its own sheen instead of the theme primary',
+        (tester) async {
+      // Parity with GlassButton, which has resolved this since 1.3.0: a null
+      // radius asks for the platform calibration, and the calibration is the
+      // radius, the sigma and the alpha together. The theme's adaptive
+      // primary is white at 24% (light) / 16% (dark) — roughly double the
+      // native sheen — and at a 1.6 radius under a sigma-16 blur that reads
+      // as a fog circle rather than a specular wash. An app that wants its
+      // own colour there passes `interactionGlowColor`, which still wins.
+      const themeColor = Color(0xFF00FF00);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GlassTheme(
+            data: GlassThemeData(
+              light: GlassThemeVariant(
+                glowColors: const GlassGlowColors(primary: themeColor),
+              ),
+              dark: GlassThemeVariant(
+                glowColors: const GlassGlowColors(primary: themeColor),
+              ),
+            ),
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: GlassTabBar.searchable(
+                tabs: _testTabs,
+                selectedIndex: 0,
+                onTabSelected: (_) {},
+                isSearchActive: true,
+                maskingQuality: MaskingQuality.off,
+                searchConfig: GlassSearchBarConfig(
+                  onSearchToggle: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final glows = tester.widgetList<GlassGlow>(find.byType(GlassGlow));
+      expect(glows, isNotEmpty);
+      expect(
+        glows.any((g) => g.glowColor == themeColor),
+        isFalse,
+        reason: 'native mode should not take the theme primary',
+      );
     });
 
     testWidgets(
@@ -1537,6 +1590,96 @@ void main() {
         field.style?.color,
         equals(CupertinoColors.label.color),
         reason: 'hintStyle without color must not drop resolved textColor',
+      );
+    });
+  });
+
+  // ── typed text vs hint colour ─────────────────────────────────────────────
+  // `textColor` is documented as the typed text's colour and `hintStyle` as
+  // the hint's. A caller that mutes the hint must not get muted typed text.
+
+  group('textColor and hintStyle colour are independent', () {
+    const typed = Color(0xFF112233);
+    const hint = Color(0xFF8899AA);
+
+    Future<CupertinoTextField> pumpField(
+      WidgetTester tester,
+      GlassSearchBarConfig config, {
+      Brightness appBrightness = Brightness.light,
+      Brightness platformBrightness = Brightness.light,
+    }) async {
+      await tester.pumpWidget(
+        MediaQuery(
+          data: MediaQueryData(platformBrightness: platformBrightness),
+          child: MaterialApp(
+            theme: ThemeData(brightness: appBrightness),
+            home: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: GlassTabBar.searchable(
+                tabs: _testTabs,
+                selectedIndex: 0,
+                onTabSelected: (_) {},
+                isSearchActive: true,
+                maskingQuality: MaskingQuality.off,
+                searchConfig: config,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      return tester.widget<CupertinoTextField>(find.byType(CupertinoTextField));
+    }
+
+    testWidgets('both set → typed text takes textColor, hint takes hintStyle',
+        (tester) async {
+      final field = await pumpField(
+        tester,
+        GlassSearchBarConfig(
+          onSearchToggle: (_) {},
+          textColor: typed,
+          hintStyle: const TextStyle(color: hint, fontSize: 15),
+        ),
+      );
+      expect(field.style?.color, equals(typed),
+          reason: 'an explicit textColor must not be overridden by hintStyle');
+      expect(field.placeholderStyle?.color, equals(hint));
+      // Metrics stay shared, so the field does not jump on the first key.
+      expect(field.style?.fontSize, equals(15));
+      expect(field.placeholderStyle?.fontSize, equals(15));
+    });
+
+    testWidgets('only hintStyle colour set → typed text still follows it',
+        (tester) async {
+      // Unchanged behaviour for callers that style the field through
+      // hintStyle alone.
+      final field = await pumpField(
+        tester,
+        GlassSearchBarConfig(
+          onSearchToggle: (_) {},
+          hintStyle: const TextStyle(color: hint),
+        ),
+      );
+      expect(field.style?.color, equals(hint));
+      expect(field.placeholderStyle?.color, equals(hint));
+    });
+
+    testWidgets('dynamic colours on both resolve against the app brightness',
+        (tester) async {
+      final field = await pumpField(
+        tester,
+        GlassSearchBarConfig(
+          onSearchToggle: (_) {},
+          textColor: CupertinoColors.label,
+          hintStyle: const TextStyle(color: CupertinoColors.secondaryLabel),
+        ),
+        appBrightness: Brightness.dark,
+        platformBrightness: Brightness.light,
+      );
+      expect(field.style?.color, equals(CupertinoColors.label.darkColor));
+      expect(
+        field.placeholderStyle?.color,
+        equals(CupertinoColors.secondaryLabel.darkColor),
       );
     });
   });
