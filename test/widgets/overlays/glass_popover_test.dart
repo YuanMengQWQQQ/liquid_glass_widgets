@@ -904,6 +904,192 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  // ── Trigger soft-detach and landing opacity ───────────────────────────────
+
+  testWidgets('Trigger dissolves cleanly to 0.0 when popover is fully open',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassPopover(
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              popoverWidth: 200,
+              contentBuilder: (context, close) => const Text('Content'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    // When fully open, the trigger must be cleanly dissolved (opacity 0.0)
+    // so there is no ghost button or visual artifact under/behind the popover.
+    final opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
+    final triggerOpacity = opacityWidgets.first.opacity;
+    expect(
+      triggerOpacity,
+      equals(0.0),
+      reason:
+          'Trigger should be fully dissolved when popover is open (clean detach)',
+    );
+  });
+
+  testWidgets('Trigger opacity returns to 1.0 after popover fully closes',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassPopover(
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              popoverWidth: 200,
+              contentBuilder: (context, close) => const Text('Content'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    // Close via barrier tap
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    // When fully closed, the trigger should not have an Opacity widget or it should be 1.0
+    final opacityFinder = find.byType(Opacity);
+    if (opacityFinder.evaluate().isNotEmpty) {
+      final opacity = tester.widget<Opacity>(opacityFinder.first);
+      expect(opacity.opacity, equals(1.0));
+    }
+    expect(find.text('Btn'), findsOneWidget);
+  });
+
+  testWidgets(
+      'GlassPopover on standard quality renders only single GlassContainer on close (no Blob A ghost)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassPopover(
+              quality: GlassQuality.standard,
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              popoverWidth: 200,
+              contentBuilder: (context, close) => const Text('Content'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    // Trigger close via barrier tap
+    await tester.tapAt(const Offset(10, 10));
+    // Pump partially into the close animation (e.g. 50ms)
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Under standard quality, Blob A is suppressed during close to prevent double-button overlap.
+    // There should be exactly 1 GlassContainer inside the overlay (Blob B, the collapsing popover body).
+    final overlayContainers = find.descendant(
+      of: find.byType(LiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(overlayContainers, findsOneWidget);
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'GlassPopover on minimal quality renders only single GlassContainer on close (no Blob A ghost)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassPopover(
+              quality: GlassQuality.minimal,
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              popoverWidth: 200,
+              contentBuilder: (context, close) => const Text('Content'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final overlayContainers = find.descendant(
+      of: find.byType(LiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(overlayContainers, findsOneWidget);
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'GlassPopover renders Blob A trigger ghost during opening morph (liquid bridge preserved on open)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassPopover(
+              quality: GlassQuality.standard,
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              popoverWidth: 200,
+              popoverHeight: 100,
+              contentBuilder: (context, close) => const Text('Content'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pump(const Duration(milliseconds: 30));
+
+    final overlayContainers = find.descendant(
+      of: find.byType(LiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(overlayContainers, findsNWidgets(2));
+
+    await tester.pumpAndSettle();
+  });
+
   testWidgets(
       'GlassPopover content presents within 150ms with GlassAccessibilityScope(reduceMotion: true)',
       (tester) async {

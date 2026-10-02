@@ -1,8 +1,48 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SemanticsAction;
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 void main() {
+  for (final fromTrigger in [false, true]) {
+    for (final cancel in [false, true]) {
+      testWidgets(
+          'active ${fromTrigger ? 'trigger' : 'menu'} pointer can '
+          '${cancel ? 'cancel' : 'end'} after menu unmounts', (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: GlassMenu(
+                enableContinuousSwipe: fromTrigger,
+                trigger:
+                    const SizedBox(width: 60, height: 40, child: Text('Open')),
+                items: [GlassMenuItem(title: 'Action', onTap: () {})],
+              ),
+            ),
+          ),
+        );
+        if (!fromTrigger) {
+          await tester.tap(find.text('Open'));
+          await tester.pumpAndSettle();
+        }
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text(fromTrigger ? 'Open' : 'Action')),
+        );
+        await tester.pump();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await gesture.moveBy(const Offset(0, 5));
+        if (cancel) {
+          await gesture.cancel();
+        } else {
+          await gesture.up();
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets('GlassMenu toggles and renders items',
       (WidgetTester tester) async {
     await tester.pumpWidget(
@@ -1138,5 +1178,495 @@ void main() {
     expect(find.text('Start Activity'), findsNothing);
 
     await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'GlassMenuItem does not throw RenderFlex overflow when constrained to narrow width',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 59.9,
+              child: GlassMenuItem(
+                icon: const Icon(Icons.share),
+                title: 'Share',
+                onTap: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(GlassMenuItem), findsOneWidget);
+  });
+
+  testWidgets(
+      'GlassMenu opening morph with icons and default menuWidth does not overflow',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Open'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(
+                  icon: const Icon(Icons.share),
+                  title: 'Option A',
+                  onTap: () {},
+                ),
+                GlassMenuItem(
+                  icon: const Icon(Icons.edit),
+                  title: 'Option B',
+                  onTap: () {},
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    // Pump through morph animation frame by frame
+    for (int i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('Option A'), findsOneWidget);
+    expect(find.text('Option B'), findsOneWidget);
+  });
+
+  // ── Trigger soft-detach opacity ───────────────────────────────────────────
+
+  testWidgets('Trigger opacity is 1.0 before menu opens', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    // Before tapping: the trigger must be fully opaque.
+    final opacity = tester.widget<Opacity>(find.byType(Opacity).first);
+    expect(opacity.opacity, equals(1.0));
+  });
+
+  testWidgets('Trigger dissolves cleanly to 0.0 when menu is fully open',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    // When fully open, the trigger must be cleanly dissolved (opacity 0.0)
+    // so there is no ghost button or visual artifact under/behind the menu.
+    final opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
+    final triggerOpacity = opacityWidgets.first.opacity;
+    expect(
+      triggerOpacity,
+      equals(0.0),
+      reason:
+          'Trigger should be fully dissolved when menu is open (clean detach)',
+    );
+  });
+
+  testWidgets('Trigger opacity returns to 1.0 after menu fully closes',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+    // Close by tapping again.
+    await tester.tap(find.text('Btn'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    final opacity = tester.widget<Opacity>(find.byType(Opacity).first);
+    expect(opacity.opacity, equals(1.0));
+  });
+
+  testWidgets(
+      'GlassMenu on standard quality renders only single GlassContainer on close (no Blob A ghost)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              quality: GlassQuality.standard,
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    // Trigger close
+    await tester.tap(find.text('Item'));
+    // Pump partially into the close animation (e.g. 50ms)
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Under standard quality, Blob A is suppressed during close to prevent double-button overlap.
+    // There should be exactly 1 GlassContainer inside the overlay (Blob B, the collapsing menu body).
+    final overlayContainers = find.descendant(
+      of: find.byType(AdaptiveLiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(overlayContainers, findsOneWidget);
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'GlassMenu on minimal quality renders only single GlassContainer on close (no Blob A ghost)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              quality: GlassQuality.minimal,
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Item'));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final overlayContainers = find.descendant(
+      of: find.byType(AdaptiveLiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(overlayContainers, findsOneWidget);
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'GlassMenu with platformViewBackdrop: true suppresses Blob A on close even with premium quality',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              quality: GlassQuality.premium,
+              platformViewBackdrop: true,
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Item'));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final overlayContainers = find.descendant(
+      of: find.byType(AdaptiveLiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(overlayContainers, findsOneWidget);
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'GlassMenu renders Blob A trigger ghost during opening morph (liquid bridge preserved on open)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              quality: GlassQuality.standard,
+              trigger: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    // Pump partially into the opening animation where anchorScale > 0
+    await tester.pump(const Duration(milliseconds: 30));
+
+    // On open, both Blob A (trigger ghost) and Blob B (menu body) must be present
+    final overlayContainers = find.descendant(
+      of: find.byType(AdaptiveLiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(overlayContainers, findsNWidgets(2));
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'GlassMenu on standard quality lerps border radius toward trigger border radius during close',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GlassMenu(
+              quality: GlassQuality.standard,
+              menuBorderRadius: 24.0,
+              trigger: const SizedBox(
+                width: 40,
+                height: 20, // trigger shortest side / 2 = 10.0
+                child: Text('Btn'),
+              ),
+              menuWidth: 200,
+              items: [
+                GlassMenuItem(title: 'Item', onTap: () {}),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Btn'));
+    await tester.pumpAndSettle();
+
+    // Start close
+    await tester.tap(find.text('Item'));
+    // Pump into close travel
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final containerFinder = find.descendant(
+      of: find.byType(AdaptiveLiquidGlassLayer),
+      matching: find.byType(GlassContainer),
+    );
+    expect(containerFinder, findsOneWidget);
+
+    final container = tester.widget<GlassContainer>(containerFinder);
+    final shape = container.shape as LiquidRoundedRectangle;
+    // On standard quality, border radius lerps between trigger radius (10.0) and menuBorderRadius (24.0)
+    // rather than locking to full capsule rounding (which would be min(width, height)/2 >= 40.0)
+    expect(shape.borderRadius, lessThanOrEqualTo(24.0));
+    expect(shape.borderRadius, greaterThanOrEqualTo(10.0));
+
+    await tester.pumpAndSettle();
+  });
+
+  group('non-scrollable menu row activation', () {
+    Future<(GlassMenuController, List<String>)> openMenu(
+        WidgetTester tester) async {
+      final controller = GlassMenuController();
+      final tapped = <String>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                Positioned(
+                  left: 40,
+                  top: 80,
+                  child: GlassMenu(
+                    controller: controller,
+                    menuAlignment: GlassMenuAlignment.topLeft,
+                    trigger: const SizedBox(width: 8, height: 8),
+                    items: [
+                      GlassMenuItem(
+                          title: 'Copy', onTap: () => tapped.add('Copy')),
+                      GlassMenuItem(
+                          title: 'Cut', onTap: () => tapped.add('Cut')),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      controller.open();
+      await tester.pumpAndSettle();
+      return (controller, tapped);
+    }
+
+    testWidgets('a screen-reader tap activates the row', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final (controller, tapped) = await openMenu(tester);
+
+      final node = tester.getSemantics(find.bySemanticsLabel('Copy').first);
+      node.owner!.performAction(node.id, SemanticsAction.tap);
+      await tester.pumpAndSettle();
+
+      expect(tapped, ['Copy']);
+      expect(controller.isOpen, isFalse);
+      semantics.dispose();
+    });
+
+    testWidgets('Enter on a focused row activates it', (tester) async {
+      final (controller, tapped) = await openMenu(tester);
+
+      Focus.of(tester.element(find.text('Copy'))).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(tapped, ['Copy']);
+      expect(controller.isOpen, isFalse);
+    });
+
+    testWidgets('a touch tap still activates the row exactly once',
+        (tester) async {
+      final (_, tapped) = await openMenu(tester);
+
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+
+      expect(tapped, ['Copy']);
+    });
+  });
+
+  testWidgets(
+      'a slide-to-select released over the gap between two rows activates a '
+      'row', (tester) async {
+    final controller = GlassMenuController();
+    final tapped = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned(
+                left: 40,
+                top: 80,
+                child: GlassMenu(
+                  controller: controller,
+                  menuAlignment: GlassMenuAlignment.topLeft,
+                  trigger: const SizedBox(width: 8, height: 8),
+                  items: [
+                    GlassMenuItem(
+                        title: 'Copy', onTap: () => tapped.add('Copy')),
+                    GlassMenuItem(title: 'Cut', onTap: () => tapped.add('Cut')),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    controller.open();
+    await tester.pumpAndSettle();
+
+    // Rows are separated by a 2px gap; just below the midpoint between the
+    // two row centres lies inside it.
+    final copy = tester.getCenter(find.text('Copy'));
+    final cut = tester.getCenter(find.text('Cut'));
+    final gesture = await tester.startGesture(copy);
+    await tester.pump();
+    await gesture.moveTo(cut);
+    await tester.pump();
+    await gesture.moveTo(Offset(copy.dx, (copy.dy + cut.dy) / 2 + 0.5));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(tapped, hasLength(1));
+    expect(controller.isOpen, isFalse);
   });
 }

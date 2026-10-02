@@ -1,3 +1,93 @@
+# 1.9.0
+
+## Features
+
+- **Vertical bars on iPhone Duo (#348, PR #365):** Under a `GlassNavigationShell`, the pinned chrome, `GlassTabBar.bottom` and `GlassToolbar` now move into the 84pt strip iOS 27.1 reserves on the outer display and on the inner display in landscape, laid out to the native strip's measured geometry. The title stays in a row at the top of the content, and `GlassBarItem.axisBehavior` decides which items go vertical. Where the strip runs short, the chrome overflows into a ••• menu and the tab bar collapses to its selected tab. The strip is read from `MediaQuery.viewPadding` and published as `GlassVerticalBar`; `GlassNavigationShell.verticalBarBehavior` and `verticalBarCompression` mirror UIKit's `preferredVerticalBarBehavior` and `verticalBarCompressionBehavior`. Nothing changes on any other device.
+
+  ```dart
+  GlassNavigationShell(
+    verticalBarBehavior: GlassVerticalBarBehavior.automatic,
+    verticalBarCompression: GlassVerticalBarCompression.automatic,
+    child: child!,
+  )
+  ```
+
+  Thanks to [@JakeThomson](https://github.com/JakeThomson) for the contribution (#365).
+
+- **Plain cross-fade for pinned chrome after committed back-swipe (PR #360):** Added `swipeCommitTransition` to `GlassNavigationShell` (`GlassSwipeCommitTransition.crossFade` vs `GlassSwipeCommitTransition.effect`) to perform a plain cross-fade without capsule swell, scale, or blur after an interactive back-swipe commits.
+
+  Thanks to [@DFelten](https://github.com/DFelten) for the contribution (#360).
+
+- **Search and large titles in iPhone Duo's strip (#366, PR #370):** `GlassTabBar.searchable` now joins the strip's capsule with search as its last slot, and opens its field in the row at the top of the content. A `GlassLargeTitle` moves into that row at 28pt, drawn by the `GlassAppBar.pinned` sharing its controller, and scrolls away with the content; its `searchBar` becomes a magnifier at the bottom of the strip, which opens the field along the bottom of the content and hides the bar, as `searchable` does natively. The row's insets are physical, as natively, so in a right-to-left app the title ends against the strip.
+
+  Thanks to [@JakeThomson](https://github.com/JakeThomson) for the contribution (#370).
+
+- **Sheets, popovers and Reduce Transparency in iPhone Duo's strip (#367, PR #371):** A `GlassModalSheet` now takes the strip's place where it covers it, as natively: on the outer display its `GlassAppBar.pinned` stacks down a strip of its own, and the sheet rises to 8pt from the top with its margins kept. On the inner display it is a 653pt card with a horizontal bar, placed by the new `placement` (`GlassSheetPlacement`, mirroring `presentationPlacement(_:)`); `.trailing` docks it over the strip and moves its bar into it. A `GlassMenu` or `GlassPopover` opened from the strip opens towards the content, centred on its item. Under Reduce Transparency the strip and the title row turn opaque behind a hairline. A pinned bar inside a presented route no longer registers with the shell, since the presentation is its container.
+
+  Thanks to [@JakeThomson](https://github.com/JakeThomson) for the contribution (#371).
+
+## Bug Fixes
+
+- **`GlassMenu` slide-to-select released between two rows (PR #375):** Releasing over the 2px gap between two rows activated nothing and left the menu open. Each row's hit zone now includes half of the gap on either side, so a release there activates the nearer row.
+
+  Thanks to [@F1orian](https://github.com/F1orian) for the fix (#375).
+
+- **`GlassMenu` keyboard and screen-reader activation (PR #376):** On menus that don't scroll, pressing Enter or Space on a focused row, or activating it with VoiceOver or TalkBack, did nothing; only touch worked. These now activate the row, and a touch tap still activates it exactly once.
+
+  Thanks to [@F1orian](https://github.com/F1orian) for the fix (#376).
+
+- **`GlassMenu` pointer events after unmount (fixes #363, PR #364):** Ignore events from active menu and continuous-swipe pointers after disposal, preventing unmounted context and disposed notifier errors when a route is removed during a gesture.
+
+  Thanks to [@yairsts](https://github.com/yairsts) for the fix (#364).
+
+- **In-route bar items slot size (PR #362):** Size in-route bar items in `GlassPinnedBarChrome` to match the pinned cluster's slot geometry even with custom icon sizes.
+
+  Thanks to [@DFelten](https://github.com/DFelten) for the fix (#362).
+
+- **Pinned chrome icons blur on pop to a route with no pinned bar (follow-up to #351):** When popping from a route with a pinned capsule to a route with no pinned bar, item icons no longer blur out on the first frame while the glass capsule stays visible. Items now dissolve together with the capsule glass, matching native iOS behaviour.
+
+- **`GlassPinnedBarChrome` action items order in RTL (fixes #374):** Keep action items in consistent visual order when a modal sheet triggers hand-over under RTL layout.
+
+# 1.8.1
+
+## Bug Fixes
+
+- **`GlassScrollEdgeEffect` stale texture on theme switch (fixes #352):** Recaptures the background when brightness or `fadeColor` changes; stale in-flight captures are discarded via a generation counter.
+- **Pinned navigation chrome `buttonSettings` and inset on pop (fixes #351):** `buttonSettings` and `horizontalInset` now adopt the destination route's values from the first frame of a pop transition, rather than snapping at completion.
+- **`GlassButton` / `GlassIconButton` isolated semantics node (fixes #354):** The button label, role, and tap action now land on a single isolated semantics node. Previously they merged into an ancestor boundary or split across two nodes.
+- **Glow layout crash during route transitions (fixes #355):** Eliminates `StateError: RenderBox was not laid out` crashes that occurred when a glow animation updated in the same frame a route transition wrapper (e.g. `SlideTransition`) was inserted above the route.
+- **Interactive widget `CurvedAnimation` and `ValueNotifier` disposal (fixes #356):** All interactive and overlay widgets now correctly dispose their `CurvedAnimation` instances and `ValueNotifier`s on unmount, preventing listener leaks and `leak_tracker` failures in widget tests.
+
+# 1.8.0
+
+## Features
+
+- **iOS 27 material for `GlassQuality.premium`:** New `LiquidGlassSettings` terms, each
+  measured against a SwiftUI `glassEffect(.regular)` control on the same screen: `frost`,
+  `frostOpacity`, `frostClamp` and `frostWeight` for the cloud that a copy of the content
+  still shows through (`blurWeight` shapes that copy), `rimShade` and `rimShadeEnds` for the
+  half-point outline, `rimLight` for its highlight lobes, and `GlassLensModel.paraxial` for
+  the evenly folded rim band. `LiquidGlassSettings.ios27Light` and `ios27Dark` put them
+  together, and `GlassThemeSettings` carries each term so a theme can apply them app-wide.
+  All default to off, and existing settings render exactly as before. The frost
+  costs one blur pass, written to alternate pixel rows of the shape, plus a colour pass when
+  `frostWeight` is not 1.
+
+  Thanks to [@JakeThomson](https://github.com/JakeThomson) for the contribution (#347).
+
+- **`GlassMenuItem.closeDelay`:** New optional `Duration` that defers menu dismissal after `onTap` fires. Useful when the item hosts an animated `trailing` widget (e.g. `GlassSwitch`) so its animation completes before the menu morphs away. Defaults to `null` (synchronous close — backward compatible).
+- **Apple Mail iOS 26/27 showcase demo:** Added an Apple Mail showcase in `example/lib/apple_mail/` featuring pinned bar navigation with gel-morph across mailbox, inbox, and detail screens, living liquid morph compose sheet via `GlassMorphTrigger` and `GlassModalSheet`, floating triage bar with `GlassButtonGroup`, options popover with `GlassMenu`, and full Cupertino styling. Includes a `GlassSwitch` row (with `closeDelay: 650 ms`) in the Inbox `···` menu to toggle between iOS 26 and iOS 27 glass modes, with state persisted globally across the full navigation stack via `kMailUseIos27` and `MailGlassScope`.
+- **Liquid droplet morph return and metaball fusion for `GlassMenu` and `GlassPopover`:** Implements centroid flight trajectory on close for `GlassMenu` and `GlassPopover`, unpinning the returning shape from the trigger corner to fly directly toward the trigger anchor center. Adds an ease-in droplet contraction curve and early `anchorScale` ramp-in to enable authentic SDF metaball bridging, morphs border radius directly to capsule/droplet shape on close, rapidly flushes menu items over the first 15% of close to maintain a pure liquid droplet in flight, and resolves narrow constraint layout in `GlassMenuItem`.
+
+## Bug Fixes
+
+- **Graceful quality tier routing for standard and minimal overlay close:** Standard and minimal tiers in `GlassMenu` and `GlassPopover` cleanly route through simplified fade and scale fallbacks on close rather than attempting premium shader metaball blending.
+- **`GlassModalSheet` submerged offset tracking via `SheetStateInfo.submergedBottom`:** Exposes `submergedBottom` on `SheetStateInfo` via `GlassModalSheetStateProvider` so sheet descendants can accurately compensate for the submerged depth of `GlassModalSheet` in `GlassSheetState.full` when positioning keyboard toolbars, floating action bars, or scroll view insets above the software keyboard and safe area floor.
+- **Scoped backdrop pass rect resolution for nested glass and layer coordinators:** Differentiates descendants painted inside a glass shape's `BackdropFilterLayer` (such as `GlassButton` inside `GlassModalSheet`) from children painted outside the pass via `super.paint` (such as `AnimatedGlassIndicator` inside `AdaptiveLiquidGlassLayer` / `GlassTabBar.bottom`). Retains `backdropPassClipRectLocal` across frames for isolated descendant repaints (preventing buttons in modal sheets from disappearing when clicked or animated), while ensuring peer children of layer coordinators correctly resolve against root screen coordinates.
+- **Nested `AdaptiveGlass` honors `useOwnLayer`:** Ensures nested glass controls explicitly marked with `useOwnLayer: true` preserve their own refractive shader layer and specular highlights rather than collapsing into an ancestor's 2D vibrancy backer.
+- **`GlassNavPinnedHost` trailing action groups align to the trailing edge:** Pairs action groups from the anchored trailing edge when `anchoredAtStart` is false instead of raw index 0. When navigating between routes with differing numbers of trailing groups, the rightmost buttons now correctly morph into each other in place on the trailing edge while remaining groups cleanly materialize or dematerialize without unexpected layout shifting.
+- **`GlassGlow` touch specular coordinates in nested layers:** Corrects screen-to-pass coordinate translation in `_TouchSpecularBridge` so touch specular highlights track accurately within nested backdrop passes.
+
 # 1.7.2
 
 ## Bug Fixes

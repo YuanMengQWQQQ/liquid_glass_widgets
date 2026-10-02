@@ -15,12 +15,23 @@ void main() {
     GlassNavigationShellState.debugPinningSupported = null;
   });
 
-  Widget shellApp(Widget home, {bool shell = true}) {
+  Widget shellApp(
+    Widget home, {
+    bool shell = true,
+    TextDirection textDirection = TextDirection.ltr,
+  }) {
     return MaterialApp(
-      builder: shell
-          ? (context, child) => GlassNavigationShell(child: child!)
-          : null,
-      home: home,
+      builder: (context, child) {
+        final content = Directionality(
+          textDirection: textDirection,
+          child: child!,
+        );
+        return shell ? GlassNavigationShell(child: content) : content;
+      },
+      home: Directionality(
+        textDirection: textDirection,
+        child: home,
+      ),
     );
   }
 
@@ -95,6 +106,84 @@ void main() {
       await settle(tester);
 
       expect(hostRect(tester).left, 4);
+    });
+
+    testWidgets(
+        'a pop lands on the incoming route\'s guide from the first frame',
+        (tester) async {
+      await tester.pumpWidget(shellApp(const _MaterialBarScreen(
+        title: 'Inbox',
+        actionIcon: CupertinoIcons.add,
+        horizontalInset: 16,
+      )));
+      await settle(tester);
+
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.push(MaterialPageRoute<void>(
+        builder: (_) => const _MaterialBarScreen(
+          title: 'Detail',
+          actionIcon: CupertinoIcons.share,
+          horizontalInset: 4,
+        ),
+      ));
+      await settle(tester);
+      expect(hostRect(tester).left, 4);
+
+      navigator.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(hostRect(tester).left, 16);
+
+      await settle(tester);
+      expect(hostRect(tester).left, 16);
+    });
+  });
+
+  group('buttonSettings', () {
+    testWidgets('follows the route being entered, on push and pop (fixes #351)',
+        (tester) async {
+      const inboxSettings = LiquidGlassSettings(blur: 10, thickness: 20);
+      const detailSettings = LiquidGlassSettings(blur: 30, thickness: 40);
+
+      await tester.pumpWidget(shellApp(const _MaterialBarScreen(
+        title: 'Inbox',
+        actionIcon: CupertinoIcons.add,
+        buttonSettings: inboxSettings,
+      )));
+      await settle(tester);
+
+      LiquidGlassSettings? currentSettings() {
+        final scopeFinder = find.descendant(
+          of: find.byType(GlassNavPinnedHost),
+          matching: find.byType(DefaultButtonSettings),
+        );
+        if (scopeFinder.evaluate().isEmpty) return null;
+        return tester.widget<DefaultButtonSettings>(scopeFinder.first).settings;
+      }
+
+      expect(currentSettings()?.blur, 10);
+
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.push(MaterialPageRoute<void>(
+        builder: (_) => const _MaterialBarScreen(
+          title: 'Detail',
+          actionIcon: CupertinoIcons.share,
+          buttonSettings: detailSettings,
+        ),
+      ));
+      await settle(tester);
+      expect(currentSettings()?.blur, 30);
+
+      // On pop, the chrome adopts the destination's buttonSettings immediately
+      // during the transition rather than holding the leaving route's look
+      // until it snaps at completion.
+      navigator.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(currentSettings()?.blur, 10);
+
+      await settle(tester);
+      expect(currentSettings()?.blur, 10);
     });
   });
 
@@ -355,6 +444,25 @@ void main() {
       expect(find.byIcon(CupertinoIcons.back), findsNothing);
     });
 
+    testWidgets('the in-route capsule matches the one the shell draws',
+        (tester) async {
+      // Larger than the default icon, which happened to fit the padded slot.
+      const screen = _MaterialBarScreen(
+        title: 'Inbox',
+        actionIcon: CupertinoIcons.add,
+        actionIconSize: 30,
+      );
+      await tester.pumpWidget(shellApp(screen));
+      await settle(tester);
+      final pinned = tester.getSize(inHost(find.byType(GlassButton)).first);
+
+      await tester.pumpWidget(shellApp(screen, shell: false));
+      await settle(tester);
+      final inRoute = tester.getSize(inBar(find.byType(GlassButtonGroup)));
+
+      expect(inRoute, pinned);
+    });
+
     testWidgets('an unsupported device falls back in-route', (tester) async {
       GlassNavigationShellState.debugPinningSupported = false;
       await tester.pumpWidget(shellApp(const _MaterialBarScreen(
@@ -395,6 +503,131 @@ void main() {
       expect(inHost(find.byIcon(CupertinoIcons.add)), findsNothing);
       expect(inBar(find.byIcon(CupertinoIcons.add)), findsOneWidget);
     });
+    testWidgets(
+        'actions item order remains consistent in RTL when modal sheet is opened (fixes #374)',
+        (tester) async {
+      await tester.pumpWidget(shellApp(
+        const _TwoActionScreen(),
+        textDirection: TextDirection.rtl,
+      ));
+      await settle(tester);
+
+      final shareBefore =
+          tester.getCenter(inHost(find.byIcon(CupertinoIcons.share))).dx;
+      final settingsBefore =
+          tester.getCenter(inHost(find.byIcon(CupertinoIcons.settings))).dx;
+
+      // In the hoisted host, slot 0 (share) is to the left of slot 1 (settings).
+      expect(shareBefore, lessThan(settingsBefore));
+
+      // Open a modal bottom sheet, triggering handover to in-route chrome.
+      await tester.tap(find.text('open sheet'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final shareAfter =
+          tester.getCenter(inBar(find.byIcon(CupertinoIcons.share))).dx;
+      final settingsAfter =
+          tester.getCenter(inBar(find.byIcon(CupertinoIcons.settings))).dx;
+
+      // Item order must not flip between hoisted and handed-over states.
+      expect(shareAfter, lessThan(settingsAfter));
+
+      // Dismiss the bottom sheet.
+      Navigator.of(tester.element(find.text('open sheet'))).pop();
+      await settle(tester);
+
+      final shareDismissed =
+          tester.getCenter(inHost(find.byIcon(CupertinoIcons.share))).dx;
+      final settingsDismissed =
+          tester.getCenter(inHost(find.byIcon(CupertinoIcons.settings))).dx;
+
+      expect(shareDismissed, lessThan(settingsDismissed));
+      expect(shareDismissed, shareBefore);
+      expect(settingsDismissed, settingsBefore);
+    });
+
+    testWidgets(
+        'leading item order remains consistent in RTL when modal sheet is opened',
+        (tester) async {
+      await tester.pumpWidget(shellApp(
+        const _TwoLeadingScreen(),
+        textDirection: TextDirection.rtl,
+      ));
+      await settle(tester);
+
+      final shareBefore =
+          tester.getCenter(inHost(find.byIcon(CupertinoIcons.share))).dx;
+      final settingsBefore =
+          tester.getCenter(inHost(find.byIcon(CupertinoIcons.settings))).dx;
+
+      expect(shareBefore, lessThan(settingsBefore));
+
+      // Open a modal bottom sheet, triggering handover to in-route chrome.
+      await tester.tap(find.text('open sheet'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final shareAfter =
+          tester.getCenter(inBar(find.byIcon(CupertinoIcons.share))).dx;
+      final settingsAfter =
+          tester.getCenter(inBar(find.byIcon(CupertinoIcons.settings))).dx;
+
+      expect(shareAfter, lessThan(settingsAfter));
+    });
+
+    testWidgets(
+        'custom item preserves ambient RTL directionality during handover',
+        (tester) async {
+      TextDirection? hoistedDirection;
+
+      await tester.pumpWidget(shellApp(
+        GlassPinnedBarChrome(
+          backButton: false,
+          actions: [
+            GlassBarItem.custom(
+              child: Builder(
+                builder: (context) {
+                  hoistedDirection = Directionality.of(context);
+                  return const Text('test');
+                },
+              ),
+            ),
+          ],
+          builder: (context, chrome) => Scaffold(
+            appBar: AppBar(
+              automaticallyImplyLeading: false,
+              actions: chrome.actions,
+            ),
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () {
+                  showModalBottomSheet<void>(
+                    context: context,
+                    builder: (_) => const SizedBox(height: 200),
+                  );
+                },
+                child: const Text('open sheet'),
+              ),
+            ),
+          ),
+        ),
+        textDirection: TextDirection.rtl,
+      ));
+      await settle(tester);
+
+      expect(hoistedDirection, TextDirection.rtl);
+
+      await tester.tap(find.text('open sheet'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final customFinder = inBar(find.text('test'));
+      expect(customFinder, findsOneWidget);
+      final handedOverDirection =
+          Directionality.of(tester.element(customFinder));
+      expect(handedOverDirection, TextDirection.rtl);
+    });
   });
 
   testWidgets('spacers are rejected until multi-capsule rendering lands',
@@ -420,27 +653,35 @@ class _MaterialBarScreen extends StatelessWidget {
     this.enabled = true,
     this.horizontalInset,
     this.platformViewBackdrop = false,
+    this.buttonSettings,
+    this.actionIconSize,
   });
 
   final String title;
   final IconData actionIcon;
+  final double? actionIconSize;
   final VoidCallback? onBack;
   final bool backButton;
   final bool enabled;
   final double? horizontalInset;
   final bool platformViewBackdrop;
+  final LiquidGlassSettings? buttonSettings;
 
   @override
   Widget build(BuildContext context) {
     return GlassPinnedBarChrome(
       actions: [
-        GlassBarItem.icon(icon: Icon(actionIcon), onTap: () {}),
+        GlassBarItem.icon(
+          icon: Icon(actionIcon, size: actionIconSize),
+          onTap: () {},
+        ),
       ],
       backButton: backButton,
       onBack: onBack,
       enabled: enabled,
       horizontalInset: horizontalInset,
       platformViewBackdrop: platformViewBackdrop,
+      buttonSettings: buttonSettings,
       builder: (context, chrome) => Scaffold(
         appBar: AppBar(
           title: Text(title),
@@ -516,6 +757,86 @@ class _RecordingScreen extends StatelessWidget {
         hoists.add(chrome.hoisted);
         return const Scaffold(body: SizedBox());
       },
+    );
+  }
+}
+
+class _TwoActionScreen extends StatelessWidget {
+  const _TwoActionScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPinnedBarChrome(
+      actions: [
+        GlassBarItem.icon(
+          icon: const Icon(CupertinoIcons.share),
+          onTap: () {},
+        ),
+        GlassBarItem.icon(
+          icon: const Icon(CupertinoIcons.settings),
+          onTap: () {},
+        ),
+      ],
+      backButton: false,
+      builder: (context, chrome) => Scaffold(
+        appBar: AppBar(
+          title: const Text('Title'),
+          automaticallyImplyLeading: false,
+          actions: chrome.actions,
+        ),
+        body: Center(
+          child: ElevatedButton(
+            onPressed: () {
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (_) => const SizedBox(height: 200),
+              );
+            },
+            child: const Text('open sheet'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TwoLeadingScreen extends StatelessWidget {
+  const _TwoLeadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPinnedBarChrome(
+      actions: const [],
+      leading: [
+        GlassBarItem.icon(
+          icon: const Icon(CupertinoIcons.share),
+          onTap: () {},
+        ),
+        GlassBarItem.icon(
+          icon: const Icon(CupertinoIcons.settings),
+          onTap: () {},
+        ),
+      ],
+      backButton: false,
+      builder: (context, chrome) => Scaffold(
+        appBar: AppBar(
+          title: const Text('Title'),
+          automaticallyImplyLeading: false,
+          leadingWidth: 120,
+          leading: chrome.leading,
+        ),
+        body: Center(
+          child: ElevatedButton(
+            onPressed: () {
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (_) => const SizedBox(height: 200),
+              );
+            },
+            child: const Text('open sheet'),
+          ),
+        ),
+      ),
     );
   }
 }

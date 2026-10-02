@@ -8,7 +8,8 @@ class _SheetLayout extends StatelessWidget {
   final double stretch;
   final double interactionStretch;
   final double resistance;
-  final double hPad;
+  final double left;
+  final double right;
   final double effectiveBottom;
   final double effectiveHeight;
   final double topRadius;
@@ -57,7 +58,8 @@ class _SheetLayout extends StatelessWidget {
     required this.stretch,
     required this.interactionStretch,
     required this.resistance,
-    required this.hPad,
+    required this.left,
+    required this.right,
     required this.effectiveBottom,
     required this.effectiveHeight,
     required this.topRadius,
@@ -112,8 +114,8 @@ class _SheetLayout extends StatelessWidget {
     );
 
     return Positioned(
-      left: hPad,
-      right: hPad,
+      left: left,
+      right: right,
       bottom: effectiveBottom,
       height: effectiveHeight,
       child: Listener(
@@ -197,6 +199,7 @@ class _SheetLayout extends StatelessWidget {
                 state: currentStateNotifier.value,
                 progress: expandProgressValue,
                 isExpanded: expandProgressValue > 0.9,
+                submergedBottom: effectiveBottom < 0 ? -effectiveBottom : 0.0,
               ),
               child: LiquidStretch(
                 interactionScale: interactionScale,
@@ -644,11 +647,17 @@ class SheetStateInfo {
   /// Whether the sheet is currently in its expanded (full) state.
   final bool isExpanded;
 
+  /// The distance in logical pixels that the sheet's bottom edge is submerged
+  /// past the bottom of the device screen (e.g. to hide bottom rounded corners
+  /// in [GlassSheetState.full]), or 0.0 if resting at or above the screen edge.
+  final double submergedBottom;
+
   /// Creates a [SheetStateInfo] snapshot.
   const SheetStateInfo({
     required this.state,
     required this.progress,
     required this.isExpanded,
+    this.submergedBottom = 0.0,
   });
 }
 
@@ -677,7 +686,8 @@ class GlassModalSheetStateProvider extends InheritedWidget {
   bool updateShouldNotify(GlassModalSheetStateProvider oldWidget) {
     return info.state != oldWidget.info.state ||
         info.progress != oldWidget.info.progress ||
-        info.isExpanded != oldWidget.info.isExpanded;
+        info.isExpanded != oldWidget.info.isExpanded ||
+        info.submergedBottom != oldWidget.info.submergedBottom;
   }
 }
 
@@ -861,6 +871,11 @@ class GlassModalSheetScaffold extends StatelessWidget {
   /// Corner radius for 'peek' state.
   final double? peekBottomRadius;
 
+  /// Where the sheet sits across a screen with room beside it.
+  ///
+  /// See [GlassModalSheet.placement].
+  final GlassSheetPlacement placement;
+
   /// Creates a [GlassModalSheetScaffold].
   const GlassModalSheetScaffold({
     super.key,
@@ -915,6 +930,7 @@ class GlassModalSheetScaffold extends StatelessWidget {
     this.peekWidth,
     this.peekTopBorderRadius,
     this.peekBottomRadius,
+    this.placement = GlassSheetPlacement.automatic,
   }) : assert(
             detents.length > 0,
             'GlassModalSheetScaffold needs at least one detent — add medium '
@@ -986,6 +1002,7 @@ class GlassModalSheetScaffold extends StatelessWidget {
           peekWidth: peekWidth,
           peekTopBorderRadius: peekTopBorderRadius,
           peekBottomRadius: peekBottomRadius,
+          placement: placement,
           child: sheet,
         ),
       ],

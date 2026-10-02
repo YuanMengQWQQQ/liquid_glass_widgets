@@ -16,10 +16,18 @@ void main() {
     GlassNavigationShellState.debugPinningSupported = null;
   });
 
-  Widget shellApp(Widget home, {bool enabled = true}) {
+  Widget shellApp(
+    Widget home, {
+    bool enabled = true,
+    GlassSwipeCommitTransition swipeCommitTransition =
+        GlassSwipeCommitTransition.effect,
+  }) {
     return CupertinoApp(
-      builder: (context, child) =>
-          GlassNavigationShell(enabled: enabled, child: child!),
+      builder: (context, child) => GlassNavigationShell(
+        enabled: enabled,
+        swipeCommitTransition: swipeCommitTransition,
+        child: child!,
+      ),
       home: home,
     );
   }
@@ -44,6 +52,57 @@ void main() {
       if (effect.alignment == Alignment.centerRight) return effect.progress;
     }
     return 0.0;
+  }
+
+  /// The effect wrapper around the pinned actions capsule, if mounted.
+  GlassMaterializeEffect? capsuleEffect(WidgetTester tester) {
+    final effects = find.descendant(
+      of: find.byType(GlassNavPinnedHost),
+      matching: find.byType(GlassMaterializeEffect),
+    );
+    for (final element in effects.evaluate()) {
+      final effect = element.widget as GlassMaterializeEffect;
+      if (effect.alignment == Alignment.centerRight) return effect;
+    }
+    return null;
+  }
+
+  /// Commits a back-swipe onto a route with a capsule and returns the
+  /// capsule's effect on every frame it is fading in.
+  Future<List<GlassMaterializeEffect>> commitSwipe(
+    WidgetTester tester, {
+    required GlassSwipeCommitTransition transition,
+  }) async {
+    await tester.pumpWidget(shellApp(
+      _Screen(
+        title: 'Root',
+        actions: [
+          GlassBarItem.icon(icon: const Icon(CupertinoIcons.add), onTap: () {}),
+        ],
+      ),
+      swipeCommitTransition: transition,
+    ));
+    await settle(tester);
+    await _push(tester, const _Screen(title: 'Empty', actions: []));
+    await settle(tester);
+
+    final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    final gesture = await tester.startGesture(const Offset(2, 300));
+    await gesture.moveTo(Offset(width * 0.48, 300));
+    await tester.pump();
+    await gesture.moveTo(Offset(width * 0.9, 300));
+    await gesture.up();
+
+    final frames = <GlassMaterializeEffect>[];
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      final effect = capsuleEffect(tester);
+      if (effect != null && effect.progress > 0.0 && effect.progress < 1.0) {
+        frames.add(effect);
+      }
+    }
+    await settle(tester);
+    return frames;
   }
 
   /// How materialized the pinned back button is this frame, 0 to 1; -1 when
@@ -463,6 +522,117 @@ void main() {
       await settle(tester);
       expect(capsulePhase(tester), 1.0,
           reason: 'the root capsule is back once the pop commits');
+    });
+
+    testWidgets(
+        'a committed back-swipe cross-fades plainly with '
+        'GlassSwipeCommitTransition.crossFade', (tester) async {
+      final frames = await commitSwipe(
+        tester,
+        transition: GlassSwipeCommitTransition.crossFade,
+      );
+
+      expect(frames, isNotEmpty,
+          reason: 'the capsule must still fade in rather than snap');
+      expect(frames.every((effect) => effect.plain), isTrue,
+          reason: 'every frame of the commit is a plain cross-fade');
+      expect(capsulePhase(tester), 1.0);
+      expect(capsuleEffect(tester)!.plain, isFalse,
+          reason: 'the next transition materializes again');
+    });
+
+    testWidgets('a committed back-swipe keeps the effect transition by default',
+        (tester) async {
+      final frames = await commitSwipe(
+        tester,
+        transition: GlassSwipeCommitTransition.effect,
+      );
+
+      expect(frames, isNotEmpty);
+      expect(frames.any((effect) => effect.plain), isFalse,
+          reason: 'without the opt-in a swipe plays the materialize as before');
+    });
+
+    testWidgets(
+        'popping to a route with no pinned bar dissolves items without glyph blur (follow-up to #351)',
+        (tester) async {
+      Finder pinnedAdd() => find.descendant(
+            of: find.byType(GlassNavPinnedHost),
+            matching: find.byIcon(CupertinoIcons.add),
+          );
+
+      await tester.pumpWidget(shellApp(const _Screen(
+        title: 'Root',
+        actions: null,
+      )));
+      await settle(tester);
+
+      await _push(
+        tester,
+        _Screen(
+          title: 'Detail',
+          actions: [
+            GlassBarItem.icon(
+              icon: const Icon(CupertinoIcons.add),
+              onTap: () {},
+            ),
+          ],
+        ),
+      );
+      await settle(tester);
+
+      expect(capsulePhase(tester), 1.0);
+      expect(pinnedAdd(), findsOneWidget);
+
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.pop();
+      await tester.pump();
+
+      // Over the pop transition, while the capsule is dematerializing, the
+      // outgoing items should fade with the capsule glass (clusterPhaseAt)
+      // and must never apply glyph blur (outSigma == 0).
+      var testedFrames = 0;
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        final phase = capsulePhase(tester);
+        if (phase > 0.0 && phase < 1.0) {
+          testedFrames++;
+          final clusterChildFinder = find.descendant(
+            of: find.byType(GlassNavPinnedHost),
+            matching: find.byWidgetPredicate(
+              (w) => w.runtimeType.toString() == '_ClusterChild',
+            ),
+          );
+          expect(
+            clusterChildFinder,
+            findsWidgets,
+            reason: 'items remain mounted while capsule is dissolving',
+          );
+          for (final element in clusterChildFinder.evaluate()) {
+            final child = element.widget;
+            final blurSigma = (child as dynamic).blurSigma as double;
+            final opacity = (child as dynamic).opacity as double;
+            expect(
+              blurSigma,
+              0.0,
+              reason:
+                  'glyph blur must remain 0 when dissolving with no destination',
+            );
+            expect(
+              opacity,
+              closeTo(phase, 1e-4),
+              reason: 'item opacity must track capsule glass phase',
+            );
+          }
+        }
+      }
+
+      expect(testedFrames, greaterThan(0),
+          reason: 'transition must have dematerializing frames');
+
+      await settle(tester);
+      expect(pinnedAdd(), findsNothing);
+      expect(capsulePhase(tester), 0.0);
     });
 
     testWidgets('a cancelled back-swipe leaves the chrome exactly as it was',

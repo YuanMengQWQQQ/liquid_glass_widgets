@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:liquid_glass_widgets/utils/liquid_morph_physics.dart';
@@ -255,12 +257,14 @@ void main() {
       }
     });
 
-    test('blend is always non-negative', () {
+    test('blend is always non-negative (open path)', () {
+      // Only tests the open path; the closing proximity blend is covered
+      // separately in the 'closing trajectory' group below.
       for (final v in [-0.3, 0.0, 0.25, 0.5, 0.75, 1.0, 1.1]) {
         expect(
           _compute(v).blend,
           greaterThanOrEqualTo(0.0),
-          reason: 'rawValue=$v produced negative blend',
+          reason: 'rawValue=$v produced negative blend (open path)',
         );
       }
     });
@@ -277,11 +281,10 @@ void main() {
       expect(LiquidMorphPhysics.openSpring.damping, equals(16.0));
     });
 
-    test('closeSpring has same profile as openSpring', () {
-      expect(LiquidMorphPhysics.closeSpring.stiffness,
-          equals(LiquidMorphPhysics.openSpring.stiffness));
-      expect(LiquidMorphPhysics.closeSpring.damping,
-          equals(LiquidMorphPhysics.openSpring.damping));
+    test('closeSpring has snappy profile (higher stiffness for fast dismiss)',
+        () {
+      expect(LiquidMorphPhysics.closeSpring.stiffness, equals(200.0));
+      expect(LiquidMorphPhysics.closeSpring.damping, equals(21.0));
     });
 
     test('closeVelocityHint is negative (drives spring toward 0 with momentum)',
@@ -362,6 +365,314 @@ void main() {
           _compute(raw).containerScale,
           equals(1.0),
           reason: 'containerScale ≠ 1.0 at rawValue=$raw',
+        );
+      }
+    });
+  });
+
+  // ── Adaptive-mode helpers ──────────────────────────────────────────────────
+
+  group('LiquidMorphPhysics.computeScaleDelta', () {
+    test('returns 1.0 for identical square sizes', () {
+      expect(
+        LiquidMorphPhysics.computeScaleDelta(
+          sourceSize: const Size(48, 48),
+          targetSize: const Size(48, 48),
+        ),
+        closeTo(1.0, 1e-9),
+      );
+    });
+
+    test('returns correct ratio for compose-button → full-sheet', () {
+      // source: 48×48 = 2304 px²,  target: 393×852 = 334 836 px²
+      // ratio = √(334836 / 2304) ≈ 12.05
+      final delta = LiquidMorphPhysics.computeScaleDelta(
+        sourceSize: const Size(48, 48),
+        targetSize: const Size(393, 852),
+      );
+      expect(delta, greaterThan(10.0));
+      expect(delta, lessThan(15.0));
+    });
+
+    test('returns 1.0 for zero-area source (morphFromZero guard)', () {
+      expect(
+        LiquidMorphPhysics.computeScaleDelta(
+          sourceSize: const Size(0, 0),
+          targetSize: const Size(200, 300),
+        ),
+        equals(1.0),
+      );
+    });
+  });
+
+  group('LiquidMorphPhysics.computeAdaptiveBackOutAmplitude', () {
+    test('returns 2.5 when |finalDy| <= 100 px', () {
+      expect(
+        LiquidMorphPhysics.computeAdaptiveBackOutAmplitude(finalDy: 80.0),
+        closeTo(2.5, 1e-9),
+      );
+    });
+
+    test('is attenuated for large vertical travel (|finalDy| = 388 px)', () {
+      final amp = LiquidMorphPhysics.computeAdaptiveBackOutAmplitude(
+        finalDy: -388.0,
+      );
+      // Expected ≈ 2.5 * 100/388 ≈ 0.644 → clamped to min 0.7
+      expect(amp, closeTo(0.7, 1e-6));
+    });
+
+    test('never falls below the minimum amplitude (0.7)', () {
+      // Extreme travel distance that would otherwise go below min.
+      final amp = LiquidMorphPhysics.computeAdaptiveBackOutAmplitude(
+        finalDy: -10000.0,
+      );
+      expect(amp, greaterThanOrEqualTo(0.7));
+    });
+
+    test('never exceeds the base amplitude (2.5)', () {
+      final amp = LiquidMorphPhysics.computeAdaptiveBackOutAmplitude(
+        finalDy: -10.0, // very small
+      );
+      expect(amp, lessThanOrEqualTo(2.5));
+    });
+  });
+
+  group('LiquidMorphPhysics.computeBlendAttenuation', () {
+    test('returns 1.0 for scaleDelta <= 3.0 (full blend)', () {
+      expect(LiquidMorphPhysics.computeBlendAttenuation(1.0), equals(1.0));
+      expect(LiquidMorphPhysics.computeBlendAttenuation(3.0), equals(1.0));
+    });
+
+    test('is attenuated for scaleDelta > 3.0', () {
+      final att = LiquidMorphPhysics.computeBlendAttenuation(12.0);
+      expect(att, closeTo(3.0 / 12.0, 1e-9)); // 0.25
+      expect(att, lessThan(1.0));
+    });
+
+    test('never falls below 0.2', () {
+      final att = LiquidMorphPhysics.computeBlendAttenuation(1000.0);
+      expect(att, greaterThanOrEqualTo(0.2));
+    });
+  });
+
+  group('LiquidMorphPhysics — adaptive mode (scaleDelta = 12.0)', () {
+    // Simulate a compose-button (48×48) → full-sheet (393×852) morph.
+    const scaleDelta = 12.0;
+    // finalDy = sheet_center.y - trigger_center.y (upward → negative)
+    const finalDy = -388.0;
+    const finalDx = 0.0;
+
+    LiquidMorphState computeAdaptive(double rawValue) =>
+        LiquidMorphPhysics.compute(
+          rawValue: rawValue,
+          finalDx: finalDx,
+          finalDy: finalDy,
+          scaleDelta: scaleDelta,
+        );
+
+    test('sizeT stays compact (< 0.40) through first 35% of open', () {
+      for (int i = 0; i <= 35; i++) {
+        final raw = i / 100.0;
+        final s = computeAdaptive(raw);
+        expect(
+          s.sizeT,
+          lessThan(0.40),
+          reason: 'sizeT not compact at rawValue=$raw (adaptive off?)',
+        );
+      }
+    });
+
+    test('sizeT reaches exactly 1.0 at rawValue = 1.0', () {
+      expect(computeAdaptive(1.0).sizeT, closeTo(1.0, 1e-9));
+    });
+
+    test('sizeT is 0.0 at rawValue = 0.0', () {
+      expect(computeAdaptive(0.0).sizeT, equals(0.0));
+    });
+
+    test('sizeT is monotonically increasing on [0, 1]', () {
+      double prev = -1.0;
+      for (int i = 0; i <= 100; i++) {
+        final raw = i / 100.0;
+        final cur = computeAdaptive(raw).sizeT;
+        expect(cur, greaterThanOrEqualTo(prev),
+            reason: 'sizeT not monotonic at rawValue=$raw (adaptive)');
+        prev = cur;
+      }
+    });
+
+    test('close undershoot pushDy magnitude is bounded (< 20 px)', () {
+      // rawValue = -0.15 simulates peak close bounce.
+      // With full travel (388 px), unbounded push would be ~58 px.
+      // Bounded push must be < 20 px.
+      final s = LiquidMorphPhysics.compute(
+        rawValue: -0.15,
+        finalDx: finalDx,
+        finalDy: finalDy,
+        scaleDelta: scaleDelta,
+      );
+      expect(
+        s.pushDy.abs(),
+        lessThan(20.0),
+        reason:
+            'pushDy=${s.pushDy} exceeds 20 px threshold — trigger will jolt',
+      );
+    });
+
+    test('close undershoot pushDy is still non-zero (bounce is visible)', () {
+      final s = LiquidMorphPhysics.compute(
+        rawValue: -0.15,
+        finalDx: finalDx,
+        finalDy: finalDy,
+        scaleDelta: scaleDelta,
+      );
+      expect(s.pushDy.abs(), greaterThan(0.0));
+    });
+
+    test('blend is attenuated for large-scale morph', () {
+      // At mid-travel the blend should still be > 0 but reduced from the
+      // un-attenuated value that would saturate the SDF viewport.
+      final s = computeAdaptive(0.5);
+      final fullBlend = LiquidMorphPhysics.compute(
+        rawValue: 0.5,
+        finalDx: finalDx,
+        finalDy: finalDy,
+        scaleDelta: 1.0, // no attenuation
+      ).blend;
+      expect(s.blend, lessThanOrEqualTo(fullBlend));
+    });
+  });
+
+  // ── Closing trajectory (isClosing = true) ──────────────────────────────────
+
+  group('LiquidMorphPhysics — closing trajectory (isClosing = true)', () {
+    test(
+        'pathT never exceeds 1.0 on close (no reverse launch in wrong direction)',
+        () {
+      for (int i = 0; i <= 100; i++) {
+        final raw = i / 100.0;
+        final s = LiquidMorphPhysics.compute(
+          rawValue: raw,
+          finalDx: _finalDx,
+          finalDy: _finalDy,
+          isClosing: true,
+        );
+        expect(s.pathT, lessThanOrEqualTo(1.0),
+            reason: 'pathT exceeded 1.0 at rawValue=$raw on close');
+      }
+    });
+
+    test('pathT decreases monotonically from 1.0 to 0.0 on close', () {
+      double prev = -0.1;
+      for (int i = 0; i <= 100; i++) {
+        final raw = i / 100.0;
+        final s = LiquidMorphPhysics.compute(
+          rawValue: raw,
+          finalDx: _finalDx,
+          finalDy: _finalDy,
+          isClosing: true,
+        );
+        expect(s.pathT, greaterThanOrEqualTo(prev),
+            reason: 'pathT not monotonic at rawValue=$raw on close');
+        prev = s.pathT;
+      }
+    });
+
+    test('sizeT decreases monotonically from 1.0 to 0.0 on close', () {
+      double prev = -0.1;
+      for (int i = 0; i <= 100; i++) {
+        final raw = i / 100.0;
+        final s = LiquidMorphPhysics.compute(
+          rawValue: raw,
+          finalDx: _finalDx,
+          finalDy: _finalDy,
+          isClosing: true,
+        );
+        expect(s.sizeT, greaterThanOrEqualTo(prev),
+            reason: 'sizeT not monotonic at rawValue=$raw on close');
+        prev = s.sizeT;
+      }
+    });
+
+    test('pathT and sizeT include closeUndershoot when rawValue < 0.0', () {
+      const undershoot = -0.15;
+      final s = LiquidMorphPhysics.compute(
+        rawValue: undershoot,
+        finalDx: _finalDx,
+        finalDy: _finalDy,
+        isClosing: true,
+      );
+      expect(s.pathT, closeTo(undershoot, 1e-9));
+      expect(s.sizeT, closeTo(undershoot, 1e-9));
+    });
+  });
+
+  // ── Closing blend proximity ramp ─────────────────────────────────────────
+  //
+  // Verifies the new _closeProximityThreshold-based blend that makes the SDF
+  // metaball bridge re-form as the droplet returns to the trigger on close.
+
+  group('LiquidMorphPhysics — closing blend proximity ramp', () {
+    LiquidMorphState closeCompute(double raw) => LiquidMorphPhysics.compute(
+          rawValue: raw,
+          finalDx: _finalDx,
+          finalDy: _finalDy,
+          isClosing: true,
+        );
+
+    test('blend is 0.0 at start of close (clampedValue = 1.0)', () {
+      // At the very top of the closing arc the droplet is far from the
+      // trigger; no bridge should be visible.
+      expect(closeCompute(1.0).blend, equals(0.0));
+    });
+
+    test('blend is 0.0 while clampedValue >= closeProximityThreshold (0.6)',
+        () {
+      // Bridge must not appear while the droplet is still in mid-travel.
+      for (final v in [1.0, 0.9, 0.8, 0.7, 0.6]) {
+        expect(
+          closeCompute(v).blend,
+          equals(0.0),
+          reason:
+              'Expected blend=0 at clampedValue=$v (above proximity threshold)',
+        );
+      }
+    });
+
+    test('blend grows as clampedValue falls below 0.6 on close', () {
+      // easeOut: bridge snaps on quickly once inside the threshold.
+      final blendAt55 = closeCompute(0.55).blend;
+      final blendAt30 = closeCompute(0.30).blend;
+      expect(blendAt55, greaterThan(0.0),
+          reason: 'Expected blend > 0 at clampedValue=0.55');
+      expect(blendAt30, greaterThan(blendAt55),
+          reason: 'Expected blend to grow as clampedValue decreases toward 0');
+    });
+
+    test('blend reaches maximum (28.0) near clampedValue = 0.0 on close', () {
+      // At landing the bridge should be at full strength.
+      expect(closeCompute(0.0).blend, closeTo(28.0, 0.5));
+    });
+
+    test('blend is always clamped to [0, 28] on entire close trajectory', () {
+      for (int i = 0; i <= 100; i++) {
+        final raw = i / 100.0;
+        final b = closeCompute(raw).blend;
+        expect(b, greaterThanOrEqualTo(0.0),
+            reason: 'Negative blend at rawValue=$raw on close');
+        expect(b, lessThanOrEqualTo(28.0),
+            reason: 'Blend exceeds max at rawValue=$raw on close');
+      }
+    });
+
+    test('blend is non-negative during close undershoot (rawValue < 0)', () {
+      // The close undershoot (spring bounces past 0) must never produce
+      // a negative blend value.
+      for (final v in [-0.05, -0.1, -0.15, -0.2]) {
+        expect(
+          closeCompute(v).blend,
+          greaterThanOrEqualTo(0.0),
+          reason: 'Negative blend at rawValue=$v during undershoot',
         );
       }
     });

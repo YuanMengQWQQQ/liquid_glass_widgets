@@ -9,6 +9,7 @@ export 'src/renderer/liquid_glass_renderer.dart'
     show
         AnchorStretchSettings,
         GlassBodyMode,
+        GlassLensModel,
         LiquidGlassSettings,
         PlatformViewGlassMode,
         LiquidGlassLayer,
@@ -105,6 +106,7 @@ export 'widgets/overlays/glass_modal_sheet.dart'
         GlassSheetState,
         GlassSheetMode,
         GlassSheetDetent, // the `detents` set on GlassModalSheet / .show()
+        GlassSheetPlacement, // the `placement` on GlassModalSheet / .show()
         GlassFillTransition,
         GlassModalSheetController,
         GlassMorphTrigger, // wraps a trigger a sheet morphs out of
@@ -137,3 +139,4 @@ export 'widgets/surfaces/shared/glass_search_bar_config.dart';
 export 'widgets/surfaces/shared/tab_bar_searchable_controller.dart';
 export 'widgets/surfaces/glass_tab_bar.dart';
 export 'widgets/surfaces/glass_toolbar.dart';
+export 'widgets/surfaces/glass_vertical_bar.dart';

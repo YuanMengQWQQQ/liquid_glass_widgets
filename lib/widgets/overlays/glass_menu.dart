@@ -1,3 +1,4 @@
+import 'dart:async' show scheduleMicrotask;
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/cupertino.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import '../../utils/glass_morph_controller.dart';
 import '../../src/renderer/liquid_glass_renderer.dart';
+import '../../src/widgets/surfaces/vertical_bar_presentation.dart';
 
 import '../../constants/glass_defaults.dart';
 import '../../types/glass_quality.dart';
@@ -255,6 +257,14 @@ class GlassMenu extends StatefulWidget {
   /// the underlying [AdaptiveLiquidGlassLayer].
   final bool platformViewBackdrop;
 
+  /// Speed profile for the open/close morph animation.
+  ///
+  /// Defaults to [MorphSpeed.normal] for native iOS 26 parity. Use
+  /// [MorphSpeed.fast] on high-frequency trigger surfaces (e.g. toolbars where
+  /// users tap repeatedly) or [MorphSpeed.instant] when Reduce Motion is
+  /// active and you want a single-frame transition without bouncing.
+  final MorphSpeed morphSpeed;
+
   /// Whether to enable iOS-style continuous swipe-to-select.
   ///
   /// When true, pressing down on the trigger opens the menu immediately and
@@ -312,6 +322,7 @@ class GlassMenu extends StatefulWidget {
     this.showDismissBarrier = true,
     this.morphFromZero = false,
     this.platformViewBackdrop = false,
+    this.morphSpeed = MorphSpeed.normal,
     this.enableContinuousSwipe = false,
     this.continuousSwipeSlop = 10.0,
   }) : assert(trigger != null || triggerBuilder != null,

@@ -17,6 +17,9 @@ import 'shared/tab_bar_types.dart';
 import '../../src/widgets/surfaces/dynamic_preferred_size.dart';
 import '../../src/widgets/surfaces/tab_bar_bottom_layout.dart';
 import '../../src/widgets/surfaces/tab_bar_searchable_layout.dart';
+import '../../src/widgets/surfaces/tab_bar_vertical_layout.dart';
+import 'glass_navigation_shell.dart';
+import 'glass_vertical_bar.dart';
 
 export 'shared/glass_bar_minimize_behavior.dart';
 export 'shared/glass_search_bar_config.dart';
@@ -1190,6 +1193,14 @@ class GlassTabBar extends StatefulWidget with GlassDynamicPreferredSize {
   @override
   Listenable? get preferredSizeListenable => minimizeController;
 
+  /// Whether this bar moves into iPhone Duo's vertical bar strip where a
+  /// [GlassNavigationShell] has resolved one ([GlassVerticalBar.maybeOf]).
+  ///
+  /// True for [GlassTabBar.bottom], [GlassTabBar.minimizable] and
+  /// [GlassTabBar.searchable], whose search becomes the last slot of the
+  /// capsule. The inline placement is part of the content rather than a bar.
+  bool get followsVerticalBar => _placement != _GlassTabBarPlacement.inline;
+
   @override
   Size get preferredSize {
     final minimized = _effectiveMinimized;
@@ -1270,6 +1281,12 @@ class _GlassTabBarState extends State<GlassTabBar> {
 
   @override
   Widget build(BuildContext context) {
+    // In iPhone Duo's vertical bar strip the bottom placements become an
+    // icon-only capsule at the bottom of the strip.
+    final verticalBar =
+        widget.followsVerticalBar ? GlassVerticalBar.maybeOf(context) : null;
+    if (verticalBar != null) return _buildVertical(context, verticalBar);
+
     // Dispatch to the correct rendering engine based on placement.
     switch (widget._placement) {
       case _GlassTabBarPlacement.bottom:
@@ -1281,6 +1298,32 @@ class _GlassTabBarState extends State<GlassTabBar> {
       case _GlassTabBarPlacement.inline:
         return _buildInline(context);
     }
+  }
+
+  /// Dispatches to [TabBarVerticalLayout] — the bar in iPhone Duo's vertical
+  /// bar strip.
+  Widget _buildVertical(BuildContext context, GlassVerticalBarData bar) {
+    final searchable = widget._placement == _GlassTabBarPlacement.searchable;
+    return TabBarVerticalLayout(
+      bar: bar,
+      tabs: widget.tabs,
+      selectedIndex: widget.selectedIndex,
+      onTabSelected: widget.onTabSelected,
+      settings: widget.settings,
+      quality: widget.quality,
+      indicatorColor: widget.indicatorColor,
+      selectedIconColor: widget.selectedIconColor,
+      unselectedIconColor: widget.unselectedIconColor,
+      iconSize: widget.iconSize,
+      platformViewBackdrop: widget.platformViewBackdrop,
+      searchConfig: searchable ? widget.searchConfig : null,
+      // An active bar that keeps its search pill compact is minimized rather
+      // than searching — Apple Music's mini mode — and the strip has no
+      // minimized form of its own.
+      isSearchActive: searchable &&
+          widget.isSearchActive &&
+          widget.searchConfig!.expandWhenActive,
+    );
   }
 
   /// Dispatches to [TabBarBottomLayout] — the iOS 26-style bottom placement engine.
@@ -1521,7 +1564,8 @@ class GlassTabBarTrailingButton {
     this.enabled = true,
   })  : menuItems = null,
         menuAlignment = null,
-        menuWidth = 200;
+        menuWidth = 200,
+        menuHeight = null;
 
   /// Opens a [GlassMenu] pull-down when the trailing pill is tapped.
   ///
@@ -1542,6 +1586,7 @@ class GlassTabBarTrailingButton {
     this.enabled = true,
     this.menuAlignment,
     this.menuWidth = 200,
+    this.menuHeight,
   }) : onTap = _noOp;
 
   /// The glyph centered on the pill.
@@ -1564,6 +1609,9 @@ class GlassTabBarTrailingButton {
 
   /// Width of the expanded menu panel in logical pixels. Defaults to 200.
   final double menuWidth;
+
+  /// Optional fixed height of the expanded menu panel in logical pixels.
+  final double? menuHeight;
 
   /// Whether this button opens a menu rather than firing a tap callback.
   bool get isMenu => menuItems != null;
