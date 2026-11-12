@@ -1,0 +1,106 @@
+# ============================================================================
+# liquid_glass_widgets —— Android APK 构建工作流
+# ----------------------------------------------------------------------------
+# 文件路径: .github/workflows/build_apk.yml
+#
+# 作用说明:
+#   本仓库是一个 Flutter 插件包 (package plugin), 根目录没有可运行的
+#   Android 工程; 唯一能产出 APK 的应用是 example/ 示例程序。
+#   且 example/android/ 目录未提交到仓库 (需由 flutter create 现场生成),
+#   因此本工作流的核心步骤是:
+#     1. 检出仓库代码
+#     2. 安装 JDK 17 (Android Gradle Plugin 8.x 的硬性要求)
+#     3. 安装 Flutter stable (满足根 pubspec.yaml 的 >=3.41.0 约束)
+#     4. 在 example/ 下生成 Android 平台脚手架
+#     5. 执行 flutter build apk --release 构建 APK
+#     6. 将 APK 上传为 workflow artifact 供下载安装
+#
+# 触发时机:
+#   - 推送到 main 分支
+#   - 推送 v* 形式的标签 (例如 v1.17.2)
+#   - 在 Actions 页面手动触发 (workflow_dispatch)
+# ============================================================================
+
+name: Build APK  # 工作流名称, 显示在 Actions 页签与运行列表上
+
+on:
+  push:
+    branches: [main]   # 推送到 main 分支时触发
+    tags: ['v*']       # 推送 v 开头的标签时触发 (与 branches 是"或"的关系)
+  workflow_dispatch:   # 允许在 GitHub Actions 页面手动点击运行
+
+# 最小权限原则 (DevSecOps): 本工作流只需读取代码, 不申请任何写权限
+permissions:
+  contents: read
+
+# 并发控制: 同一分支/标签的新一次运行会自动取消仍在排队或进行中的旧运行,
+# 避免浪费 CI 分钟数 (与 ci.yml 的策略保持一致)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Build example APK (release)  # Job 显示名
+    runs-on: ubuntu-latest             # Linux 运行器: 自带 Android SDK/NDK, 构建最快、费用最低
+
+    steps:
+      # ── 步骤 1: 检出仓库源码 ────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v7   # 官方检出 Action, 与 ci.yml 保持同一主版本
+
+      # ── 步骤 2: 安装 JDK 17 ────────────────────────────────────────────
+      # Flutter 3.41 所用的 Android Gradle Plugin 8.x 强制要求 JDK 17;
+      # 显式固定 Temurin 发行版, 保证构建环境确定、可复现
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6   # 当前主版本 (v6.x)
+        with:
+          distribution: temurin   # Eclipse Temurin: 开源、长期维护的 OpenJDK 发行版
+          java-version: '17'      # AGP 8.x 要求的 Java 版本
+
+      # ── 步骤 3: 安装 Flutter SDK ───────────────────────────────────────
+      # stable 频道与 ci.yml 的主测试矩阵一致, 且天然满足根 pubspec.yaml
+      # 中 flutter: ">=3.41.0" 的版本下限
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2   # 当前主版本 (v2.x)
+        with:
+          channel: stable   # 跟随 stable 频道最新版
+          cache: true       # 缓存 Flutter SDK 本体, 加速后续运行
+          pub-cache: true   # 额外缓存 Dart/Flutter 依赖包 (~/.pub-cache)
+
+      # ── 步骤 4: 生成 Android 平台脚手架 (关键步骤) ─────────────────────
+      # example/ 目录未提交 android/ 平台工程, 必须现场生成:
+      #   --platforms=android : 只生成 Android 平台, 不生成 iOS/web 等
+      #   --project-name      : 必须与 example/pubspec.yaml 的 name 字段一致,
+      #                         否则 flutter create 会按目录名 "example" 命名而与包名冲突
+      #   .                   : 在当前目录 (example/) 就地补全
+      # 默认不携带 --overwrite, 不会覆盖任何已存在的文件
+      - name: Generate Android platform scaffold
+        working-directory: example   # 本步骤在 example/ 目录内执行
+        run: flutter create --platforms=android --project-name liquid_glass_widgets_example .
+
+      # ── 步骤 5: 拉取 Dart/Flutter 依赖 ─────────────────────────────────
+      # example/pubspec.yaml 通过 path: ../ 引用本仓库的插件包,
+      # pub get 会同时解析插件包本身与其平台宿主配置
+      - name: Install dependencies
+        working-directory: example
+        run: flutter pub get
+
+      # ── 步骤 6: 构建 Release APK ───────────────────────────────────────
+      # flutter build apk 默认产出一个"胖" APK (app-release.apk),
+      # 同时包含 arm64-v8a / armeabi-v7a / x86_64 三种 ABI, 方便直接分发安装;
+      # example 使用 Flutter 模板默认的 debug 签名, 构建出来即可安装, 无需任何 secrets
+      - name: Build release APK
+        working-directory: example
+        run: flutter build apk --release
+
+      # ── 步骤 7: 上传 APK 为构建产物 ────────────────────────────────────
+      # 运行结束后, 在 Actions 运行页面底部的 Artifacts 区块即可下载 APK;
+      # 产物名称带上 ref 名 (分支名或标签名), 便于区分不同来源的构建
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7   # 当前主版本 (v7.x)
+        with:
+          name: liquid-glass-example-apk-${{ github.ref_name }}         # 产物名称, 如 ...-apk-main / ...-apk-v1.17.2
+          path: example/build/app/outputs/flutter-apk/app-release.apk   # Flutter APK 的固定输出路径
+          if-no-files-found: error   # 找不到 APK 时直接失败, 避免静默上传空产物
+          retention-days: 14         # 产物保留 14 天后自动清理
