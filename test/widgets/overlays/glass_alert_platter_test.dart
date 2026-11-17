@@ -1,4 +1,6 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show MaterialApp;
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:liquid_glass_widgets/src/widgets/overlays/glass_alert_platter.dart';
@@ -414,6 +416,342 @@ void main() {
       await tester.pump();
       await gesture.cancel();
       await tester.pump();
+    });
+  });
+
+  // Behaviour measured from UIAlertController on the iOS 26.5 and iOS 27.0
+  // simulators: the header scrolls, the platter re-centres above the keyboard,
+  // and action titles wrap only at accessibility text sizes.
+  group('native platter with real content', () {
+    final longMessage =
+        List.filled(60, 'This is a long line of message text.').join(' ');
+
+    void setScreen(WidgetTester tester, Size size, {double keyboard = 0}) {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
+      addTearDown(tester.view.reset);
+    }
+
+    Widget dialog({
+      String? title = 'Title',
+      String? message,
+      Widget? content,
+      List<GlassDialogAction>? actions,
+      double textScale = 1,
+    }) {
+      return Builder(
+        builder: (context) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(textScale)),
+          child: GlassDialog(
+            title: title,
+            message: message,
+            content: content,
+            actions: actions ??
+                [
+                  GlassDialogAction(label: 'No', onPressed: () {}),
+                  GlassDialogAction(label: 'OK', onPressed: () {}),
+                ],
+          ),
+        ),
+      );
+    }
+
+    // Opens [show] from a button, so the platter is a route above the page.
+    Widget opener(void Function(BuildContext) show) => Builder(
+          builder: (context) => CupertinoButton(
+            onPressed: () => show(context),
+            child: const Text('Open'),
+          ),
+        );
+
+    testWidgets('a header taller than the screen scrolls; actions stay visible',
+        (tester) async {
+      setScreen(tester, const Size(390, 400));
+      await tester
+          .pumpWidget(app(GlassStyle.ios27, dialog(message: longMessage)));
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.descendant(
+          of: find.byType(GlassAlertPlatter),
+          matching: find.byType(Scrollable),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.getRect(find.text('OK')).bottom, lessThanOrEqualTo(400));
+    });
+
+    testWidgets('re-centres in the space above the keyboard', (tester) async {
+      // Shown as a route, so no page scaffold has already inset it.
+      setScreen(tester, const Size(402, 874), keyboard: 336);
+      await tester.pumpWidget(app(
+        GlassStyle.ios27,
+        opener((context) => GlassDialog.show<void>(
+              context: context,
+              title: 'Tea name',
+              content: const CupertinoTextField(),
+              actions: [GlassDialogAction(label: 'OK', onPressed: () {})],
+            )),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      final platter = tester.getRect(find.byType(GlassContainer));
+      expect(platter.center.dy, closeTo((874 - 336) / 2, 1));
+      expect(platter.bottom, lessThanOrEqualTo(874 - 336));
+    });
+
+    testWidgets('reports an alert dialog route to assistive technology',
+        (tester) async {
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(app(GlassStyle.ios27, dialog(message: 'Body')));
+
+      final node = tester.getSemantics(find.bySemanticsLabel('Alert'));
+      expect(node.getSemanticsData().role, SemanticsRole.alertDialog);
+      expect(node, isSemantics(scopesRoute: true, namesRoute: true));
+      handle.dispose();
+    });
+
+    testWidgets('an action sheet reports a dialog route', (tester) async {
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(app(
+        GlassStyle.ios27,
+        opener((context) => showGlassActionSheet<void>(
+              context: context,
+              title: 'Choose',
+              actions: [
+                GlassActionSheetAction(label: 'Share', onPressed: () {}),
+              ],
+            )),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      final node = tester.getSemantics(find.bySemanticsLabel('Alert'));
+      expect(node.getSemanticsData().role, SemanticsRole.dialog);
+      expect(node, isSemantics(scopesRoute: true, namesRoute: true));
+      handle.dispose();
+    });
+
+    testWidgets(
+        'shown from a MaterialApp, text does not inherit the error style',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: opener((context) => GlassDialog.show<void>(
+              context: context,
+              title: 'Title',
+              message: 'Message',
+              content: const Text('Content'),
+              actions: [GlassDialogAction(label: 'OK', onPressed: () {})],
+            )),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      for (final text in ['Title', 'Message', 'Content', 'OK']) {
+        final style =
+            tester.renderObject<RenderParagraph>(find.text(text)).text.style!;
+        expect(style.decoration, isNot(TextDecoration.underline), reason: text);
+        expect(style.fontFamily, isNot('monospace'), reason: text);
+      }
+      // Plain text in custom content takes the message style.
+      final content = tester
+          .renderObject<RenderParagraph>(find.text('Content'))
+          .text
+          .style!;
+      expect(content.fontSize, 15);
+    });
+
+    const longLabel = 'Discard all unsaved changes';
+    List<GlassDialogAction> longActions() => [
+          GlassDialogAction(
+              label: longLabel, isDestructive: true, onPressed: () {}),
+          GlassDialogAction(label: 'Keep', onPressed: () {}),
+        ];
+    final longButton = find.ancestor(
+      of: find.text(longLabel),
+      matching: find.byType(GlassFocusRegion),
+    );
+    ShapeBorder buttonShape(WidgetTester tester) {
+      final fill = tester.widget<Container>(find
+          .ancestor(of: find.text(longLabel), matching: find.byType(Container))
+          .first);
+      return (fill.decoration! as ShapeDecoration).shape;
+    }
+
+    testWidgets('action titles stay on one line at regular text sizes',
+        (tester) async {
+      await tester
+          .pumpWidget(app(GlassStyle.ios27, dialog(actions: longActions())));
+      expect(tester.widget<Text>(find.text(longLabel)).maxLines, 1);
+      expect(tester.getSize(longButton).height, 48);
+      expect(buttonShape(tester), const StadiumBorder());
+
+      // The largest scale below the accessibility sizes: still one line.
+      await tester.pumpWidget(app(
+        GlassStyle.ios27,
+        dialog(actions: longActions(), textScale: 1.3),
+      ));
+      expect(tester.widget<Text>(find.text(longLabel)).maxLines, 1);
+    });
+
+    testWidgets('action titles wrap and grow the button at accessibility sizes',
+        (tester) async {
+      await tester.pumpWidget(app(
+        GlassStyle.ios27,
+        dialog(actions: longActions(), textScale: 2),
+      ));
+
+      expect(tester.takeException(), isNull);
+      final text = tester.widget<Text>(find.text(longLabel));
+      expect(text.maxLines, isNull);
+      expect(text.overflow, isNull);
+      expect(tester.getSize(longButton).height, greaterThan(48));
+      // A tall button takes rounded corners rather than becoming an oval.
+      expect(
+        buttonShape(tester),
+        const RoundedSuperellipseBorder(
+          borderRadius: BorderRadius.all(Radius.circular(32)),
+        ),
+      );
+    });
+  });
+
+  // A disabled UIAlertAction (isEnabled = false) on the iOS 27.0 simulator
+  // keeps its capsule and weight and reports its title in tertiaryLabel.
+  group('disabled actions', () {
+    List<GlassDialogAction> cancelAndDisabledSave(void Function() onCancel) => [
+          GlassDialogAction(label: 'Cancel', onPressed: onCancel),
+          const GlassDialogAction(
+            label: 'Save',
+            onPressed: null,
+            isPrimary: true,
+          ),
+        ];
+    final saveRegion = find.ancestor(
+      of: find.text('Save'),
+      matching: find.byType(GlassFocusRegion),
+    );
+
+    for (final style in [GlassStyle.ios26, GlassStyle.ios27]) {
+      testWidgets('a null onPressed disables the action ($style)',
+          (tester) async {
+        var cancels = 0;
+        await tester.pumpWidget(app(
+          style,
+          GlassDialog(
+            title: 'Tea name',
+            actions: cancelAndDisabledSave(() => cancels++),
+          ),
+        ));
+
+        await tester.tap(find.text('Save'));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        final save = tester.widget<Text>(find.text('Save'));
+        final context = tester.element(find.text('Save'));
+        expect(
+          save.style!.color,
+          CupertinoColors.tertiaryLabel.resolveFrom(context),
+        );
+        // The preferred action stays semibold while disabled.
+        expect(save.style!.fontWeight, FontWeight.w600);
+        // Still a full 48pt capsule in its place in the row.
+        expect(tester.getSize(saveRegion), const Size(140, 48));
+
+        // Its enabled neighbour is unaffected.
+        await tester.tap(find.text('Cancel'));
+        expect(cancels, 1);
+      });
+    }
+
+    testWidgets('a disabled action is reported as disabled with no tap action',
+        (tester) async {
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(app(
+        GlassStyle.ios27,
+        GlassDialog(title: 'Tea name', actions: cancelAndDisabledSave(() {})),
+      ));
+
+      expect(
+        tester.getSemantics(saveRegion),
+        isSemantics(
+          label: 'Save',
+          isButton: true,
+          hasEnabledState: true,
+          isEnabled: false,
+          hasTapAction: false,
+        ),
+      );
+      handle.dispose();
+    });
+
+    testWidgets('classic disables the GlassButton', (tester) async {
+      await tester.pumpWidget(app(
+        GlassStyle.classic,
+        GlassDialog(title: 'Tea name', actions: cancelAndDisabledSave(() {})),
+      ));
+
+      final save = tester.widget<GlassButton>(find.ancestor(
+        of: find.text('Save'),
+        matching: find.byType(GlassButton),
+      ));
+      expect(save.enabled, isFalse);
+    });
+
+    testWidgets(
+        'disabling an action while pressed clears the pressed capsule wash',
+        (tester) async {
+      Color capsuleColor() {
+        final container = tester.widget<Container>(
+          find.descendant(
+            of: saveRegion,
+            matching: find.byWidgetPredicate(
+              (w) => w is Container && w.decoration is ShapeDecoration,
+            ),
+          ),
+        );
+        return (container.decoration! as ShapeDecoration).color!;
+      }
+
+      await tester.pumpWidget(app(
+        GlassStyle.ios27,
+        GlassDialog(
+          title: 'Tea name',
+          actions: [
+            GlassDialogAction(label: 'Cancel', onPressed: () {}),
+            GlassDialogAction(
+              label: 'Save',
+              onPressed: () {},
+              isPrimary: true,
+            ),
+          ],
+        ),
+      ));
+
+      final restColor = capsuleColor();
+
+      // Press down on the enabled Save action and hold.
+      final gesture = await tester.startGesture(tester.getCenter(saveRegion));
+      await tester.pump();
+      expect(capsuleColor(), isNot(equals(restColor)));
+
+      // Rebuild with Save disabled while the pointer is still down.
+      await tester.pumpWidget(app(
+        GlassStyle.ios27,
+        GlassDialog(
+          title: 'Tea name',
+          actions: cancelAndDisabledSave(() {}),
+        ),
+      ));
+      expect(capsuleColor(), equals(restColor));
+
+      await gesture.up();
+      await tester.pump();
+      expect(capsuleColor(), equals(restColor));
     });
   });
 }

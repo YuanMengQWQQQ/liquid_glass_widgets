@@ -1,3 +1,38 @@
+# 1.17.5
+
+## Bug Fixes
+
+- **`GlassDialog`, `showGlassActionSheet`, and `GlassQuality.standard` / `minimal` materialize transitions (PR #491, #492):** Eliminates the fade-in backdrop blur pop by dissolving alert platters and `standard` / `minimal` glass without an ancestor `OpacityLayer`, preserves child focus/state across transitions, and calibrates `GlassQuality.standard` alert legibility on `ios26` / `ios27`.
+- **`GlassTabBar.searchable` right-edge anchor during parent resize (PR #488):** Animates the search pill's right inset and width so the pill stays anchored to its trailing edge while a parent container resizes or reverses mid-transition. Thanks to [@wow-sven](https://github.com/wow-sven) for the fix (#488).
+- **`GlassTabBar.searchable` input retention and keyboard-lifted hit targets (PR #489):** Retains the `CupertinoTextField` input client, selection, and composing state across compact/expanded transitions, and keeps search dismiss controls tappable above the keyboard when a bottom accessory is mounted. Thanks to [@wow-sven](https://github.com/wow-sven) for the fix (#489).
+
+# 1.17.4
+
+## Features
+
+- **`GlassSwitch` disabled state (`GlassSwitch.onChanged` is now `ValueChanged<bool>?`) (#485, #486):** Passing `onChanged: null` disables the switch — rendering it at 50% group opacity (matching `UISwitch` and `CupertinoSwitch`), ignoring touch, drag, and keyboard input without lifting into a glass lens, reporting disabled state to assistive technology, and still sliding the thumb on programmatic `value` updates. Direct callers should update `switchWidget.onChanged(v)` to `switchWidget.onChanged?.call(v)`.
+
+## Bug Fixes
+
+- **`LiquidVerticalRoundedRectangle` corner radii in `GlassQuality.standard` (PR #487):** Preserves independent top and bottom corner radii in the Standard glass renderer (`LightweightLiquidGlass`) instead of applying the larger `effectiveRadius` to all four corners. Thanks to [@wow-sven](https://github.com/wow-sven) for the fix (#487).
+- **Flutter 3.50.0 / Windows HLSL & Web ANGLE shader single-exit `main()` (`flutter/flutter#190809`):** Refactored `void main()` across all five fragment shaders (`progressive_blur.frag`, `lightweight_glass.frag`, `interactive_indicator.frag`, `liquid_glass_render.frag`, and `liquid_glass_geometry_blended.frag`) to eliminate early/multiple `return;` statements alongside `sampler2D` texture sampling — silencing all four `impellerc` warnings on Flutter `3.50.0` (`flutter build web --wasm`, Windows, and mobile) and preventing `d3dcompiler_47.dll` (FXC) HLSL compilation failures on Windows Direct3D and Chrome ANGLE with zero visual or GPU performance regressions.
+- **Shader CI & test guards (`scripts/validate_shaders.sh`, `test/shaders/single_return_main_test.dart`):** Extended shader validation to enforce single-exit `main()` statically, run Flutter's `impellerc` multi-target runtime stage check (failing on any `[WARNING]`) alongside `glslangValidator`, and guard against regressions in `flutter test` across all platforms.
+
+# 1.17.3
+
+## Features
+
+- **Disabled dialog actions (`GlassDialogAction.onPressed` is now `VoidCallback?`) (PR #480):** Passing `null` keeps an action in place while ignoring input and reporting disabled state to assistive technology (`tertiaryLabel` on `ios27` / `ios26`; dimmed `GlassButton` on `classic`). Direct callers should update `action.onPressed()` to `action.onPressed?.call()`. Thanks to [@ncosgray](https://github.com/ncosgray) for the contribution (#478, #480).
+- **`GlassTextField` and `GlassTextArea` text capitalization (`textCapitalization`) (PR #477):** Forwards `TextCapitalization` (default `none`) to the underlying `CupertinoTextField`. Thanks to [@RuslanTsitser](https://github.com/RuslanTsitser) for the contribution (#477).
+
+## Bug Fixes
+
+- **iOS 26 / 27 lifted lens contours, `GlassTabBar` platter physics, and `GlassSegmentedControl` parity (PR #481):** Calibrated `GlassTabBar` lifted magnification (`1.15×`), press-lift/overdrag platter motion, and solid-pill foreground contrast during drag; refined lifted indicator perimeter contours and dark-mode interior clarity across `GlassTabBar`, `GlassSegmentedControl`, `GlassSwitch`, and `GlassSlider`; and aligned `GlassSegmentedControl` resting `ios26` appearance with `ios27`.
+- **`GlassDialog` and `showGlassActionSheet` content scrolling, keyboard avoidance, and semantics (PR #479):** Scrolls tall headers while keeping actions pinned, re-centers above the keyboard, adds `alertDialog` / `dialog` route semantics and accessibility-scale label wrapping, and fixes `MaterialApp` text styling. Thanks to [@ncosgray](https://github.com/ncosgray) for the fix (#478, #479).
+- **`GlassMenu` and `GlassPopover` modal barrier semantics (PR #470):** Blocks background page semantics while an overlay is open without detaching the overlay from the semantics tree, and retains `GlassPopover` across open/close cycles. Thanks to [@imariman](https://github.com/imariman) for the fix (#470, #471).
+- **`GlassNavigationShell` pinned chrome behind open page `GlassMenu` barriers (PR #476):** Places pinned top and bottom bars behind open page menu barriers for both hit-testing and assistive traversal. Thanks to [@imariman](https://github.com/imariman) for the fix (#472, #476).
+- **`GlassPicker.showSheet` selection result, semantics, and `MaterialApp` styling (PR #474):** Returns the picked item via a Cancel / title / Done header, exposes the wheel as a single adjustable semantics node, and applies Cupertino `DefaultTextStyle` in both `GlassPicker.showSheet` and `showGlassDatePicker` under `MaterialApp`. Thanks to [@imariman](https://github.com/imariman) for the fix (#473, #474).
+
 # 1.17.2
 
 ## Features

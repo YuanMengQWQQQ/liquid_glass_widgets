@@ -30,6 +30,7 @@ import 'tab_bar_bottom_internal.dart'
     show
         BottomBarExtraBtn,
         BottomBarTabItem,
+        resolveActiveLensTabColors,
         resolveBarGlassSettings,
         resolveBarLabelColor;
 import '../../../widgets/surfaces/shared/glass_search_bar_config.dart';
@@ -254,12 +255,13 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
 
   // D1: whitenBoostCtrl still uses setState — it fires at most once per scroll-to-bottom
   // (200 ms easeOut, not a 120 Hz spring). Full rebuild cost is acceptable here.
-  // The three spring controllers (_tabWCtrl, _searchLeftCtrl, _searchWCtrl) drive
+  // The three spring controllers (_tabWCtrl, _searchRightCtrl, _searchWCtrl) drive
   // ListenableBuilder widgets directly — no setState on spring ticks.
   void _onWhitenTick() => setState(() {});
 
   late AnimationController _tabWCtrl;
-  late AnimationController _searchLeftCtrl;
+  late AnimationController _searchRightCtrl;
+  double? _targetSearchRight;
   late AnimationController _searchWCtrl;
   late AnimationController _whitenBoostCtrl;
   double _whitenTarget = 0.0;
@@ -318,7 +320,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
       lowerBound: double.negativeInfinity,
       upperBound: double.infinity,
     );
-    _searchLeftCtrl = AnimationController(
+    _searchRightCtrl = AnimationController(
       vsync: this,
       lowerBound: double.negativeInfinity,
       upperBound: double.infinity,
@@ -340,7 +342,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
     );
     // D1: create once — the controllers never change after initState.
     _searchPillListenable =
-        Listenable.merge([_searchLeftCtrl, _searchWCtrl, _pillScaleCtrl]);
+        Listenable.merge([_searchRightCtrl, _searchWCtrl, _pillScaleCtrl]);
     widget.scrollController?.addListener(_onScrollMaybeWhiten);
     widget.minimizeController?.attach(widget.scrollController);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -361,6 +363,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
         _controller = SearchableBottomBarController();
         _ownsController = true;
       }
+      _targetSearchRight = null;
       _controller.addListener(_onControllerChanged);
     }
     if (widget.scrollController != old.scrollController) {
@@ -407,7 +410,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
   @override
   void dispose() {
     _tabWCtrl.dispose();
-    _searchLeftCtrl.dispose();
+    _searchRightCtrl.dispose();
     _searchWCtrl.dispose();
     _pillScaleCtrl.dispose();
     widget.scrollController?.removeListener(_onScrollMaybeWhiten);
@@ -490,6 +493,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
     );
     final effectiveInteractionGlowColor = glow.color;
 
+    final bool isLight = GlassTheme.brightnessOf(context) == Brightness.light;
     final dynamicLabelColor = resolveBarLabelColor(context, darkAmount);
     final resolvedSelectedIconColor =
         widget.selectedIconColor ?? dynamicLabelColor;
@@ -497,8 +501,20 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
         widget.unselectedIconColor ?? dynamicLabelColor;
     // A minimized bar still shows its selected tab; a searching one shows the
     // tab search was opened from, which the search has since replaced.
+    // Because the collapsed circle renders pure frosted glass with no solid
+    // indicatorColor pill behind it, resolve active-lens contrast (intensity: 1.0)
+    // so an inverted resting selectedIconColor remains legible when minimized.
     final resolvedCollapsedIconColor = widget.isMinimizablePlacement
-        ? resolvedSelectedIconColor
+        ? resolveActiveLensTabColors(
+            context: context,
+            isLight: isLight,
+            intensity: 1.0,
+            indicatorColor: widget.indicatorColor,
+            indicatorSettings: widget.indicatorSettings,
+            restingIconColor: resolvedSelectedIconColor,
+            restingLabelColor: widget.selectedLabelColor,
+            dynamicLabelColor: dynamicLabelColor,
+          ).iconColor
         : resolvedUnselectedIconColor;
 
     // Native mode owns the blur: the radius and the falloff are one
@@ -507,7 +523,6 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
     final effectiveGlowSpreadRadius = resolvedGlowColors.glowSpreadRadius;
     final effectiveGlowOpacity = resolvedGlowColors.glowOpacity;
 
-    final bool isLight = GlassTheme.brightnessOf(context) == Brightness.light;
     final effectiveSettings = _applyWhiten(
       resolveBarGlassSettings(context, widget.settings),
       isLight,
@@ -613,6 +628,10 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                 final targetTabW = layout.targetTabW;
                 final targetSearchLeft = layout.targetSearchLeft;
                 final targetSearchW = layout.targetSearchW;
+                // The right inset stays stable while a parent width animation
+                // and the pill's width spring run on independent clocks.
+                final targetSearchRight =
+                    totalW - targetSearchLeft - targetSearchW;
                 final targetH =
                     searching ? widget.searchBarHeight : widget.barHeight;
                 final extraTargetW = layout.extraTargetW;
@@ -643,7 +662,8 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (!mounted) return;
                     _tabWCtrl.value = targetTabW;
-                    _searchLeftCtrl.value = targetSearchLeft;
+                    _searchRightCtrl.value = targetSearchRight;
+                    _targetSearchRight = targetSearchRight;
                     _searchWCtrl.value = targetSearchW;
                     _controller.initializePills(
                       tabW: targetTabW,
@@ -653,9 +673,13 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                   });
                 } else if (_controller.pillsInitialized) {
                   final retarget = _controller.checkRetarget(layout);
-                  if (retarget.any) {
+                  final previousRight = _targetSearchRight;
+                  final rightChanged = previousRight == null ||
+                      (targetSearchRight - previousRight).abs() > .001;
+                  if (rightChanged) _targetSearchRight = targetSearchRight;
+                  if (retarget.tabW || rightChanged || retarget.searchW) {
                     final toTabW = targetTabW;
-                    final toLeft = targetSearchLeft;
+                    final toRight = targetSearchRight;
                     final toSearchW = targetSearchW;
                     // Read during build: the callback below runs after the
                     // frame, where an inherited lookup no longer belongs.
@@ -668,8 +692,8 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                       // positions at once instead of springing across.
                       if (reduceMotion) {
                         if (retarget.tabW) _tabWCtrl.value = toTabW;
-                        if (retarget.searchLeft) {
-                          _searchLeftCtrl.value = toLeft;
+                        if (rightChanged) {
+                          _searchRightCtrl.value = toRight;
                         }
                         if (retarget.searchW) _searchWCtrl.value = toSearchW;
                         return;
@@ -689,13 +713,13 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                                 to: toTabW,
                                 velocity: _tabWCtrl.velocity));
                       }
-                      if (retarget.searchLeft) {
-                        _searchLeftCtrl.animateWith(
+                      if (rightChanged) {
+                        _searchRightCtrl.animateWith(
                             SearchableBottomBarController.makeSpring(
                                 spring: spring,
-                                from: _searchLeftCtrl.value,
-                                to: toLeft,
-                                velocity: _searchLeftCtrl.velocity));
+                                from: _searchRightCtrl.value,
+                                to: toRight,
+                                velocity: _searchRightCtrl.velocity));
                       }
                       if (retarget.searchW) {
                         _searchWCtrl.animateWith(
@@ -712,7 +736,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                   }
                 }
 
-                // D1: curTabW, curTabLeft, curSearchLeft, curSearchW are now computed
+                // D1: curTabW, curTabLeft, curSearchRight, curSearchW are now computed
                 // inside their respective ListenableBuilder builders below, so each
                 // Positioned child reads a fresh controller value on its own tick
                 // without involving the enclosing LayoutBuilder or State.build().
@@ -726,7 +750,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      // 1. Search pill / Trailing Action Pill — D1: left/width track spring controllers.
+                      // 1. Search pill / Trailing Action Pill — D1: trailing inset/width track spring controllers.
                       ListenableBuilder(
                         listenable: _searchPillListenable,
                         builder: (context, _) {
@@ -735,9 +759,9 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                           if (pillScale < 0.02) {
                             return const SizedBox.shrink();
                           }
-                          final curSearchLeft = (_controller.pillsInitialized
-                                  ? _searchLeftCtrl.value
-                                  : targetSearchLeft)
+                          final curSearchRight = (_controller.pillsInitialized
+                                  ? _searchRightCtrl.value
+                                  : targetSearchRight)
                               .clamp(0.0, totalW);
                           final curSearchW = (_controller.pillsInitialized
                                   ? _searchWCtrl.value
@@ -836,7 +860,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                           }
 
                           return Positioned(
-                            left: curSearchLeft,
+                            right: curSearchRight,
                             bottom: floatY,
                             width: math.max(0.01, curSearchW),
                             height: animH,
@@ -859,15 +883,21 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                         },
                       ),
 
-                      // 2. Optional extra button — D1: left position tracks _searchLeftCtrl.
+                      // 2. Optional extra button follows the animated search pill.
                       if (widget.extraButton != null)
                         ListenableBuilder(
-                          listenable: _searchLeftCtrl,
+                          listenable: _searchPillListenable,
                           builder: (context, _) {
-                            final curSearchLeft = (_controller.pillsInitialized
-                                    ? _searchLeftCtrl.value
-                                    : targetSearchLeft)
+                            final right = (_controller.pillsInitialized
+                                    ? _searchRightCtrl.value
+                                    : targetSearchRight)
                                 .clamp(0.0, totalW);
+                            final width = (_controller.pillsInitialized
+                                    ? _searchWCtrl.value
+                                    : targetSearchW)
+                                .clamp(0.0, totalW);
+                            final curSearchLeft =
+                                (totalW - right - width).clamp(0.0, totalW);
                             return Positioned(
                               left: extraPos ==
                                       GlassExtraButtonPosition.beforeSearch
@@ -925,6 +955,9 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                       ListenableBuilder(
                         listenable: _tabWCtrl,
                         child: _buildTabRow(
+                          context: context,
+                          isLight: isLight,
+                          dynamicLabelColor: dynamicLabelColor,
                           tabs: tabs,
                           selectedIndex: selectedIndex,
                           onTabSelected: onTabSelected,
@@ -1015,6 +1048,9 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                               childUnselected: child!,
                               selectedTabBuilder: (ctx, intensity, alignment) =>
                                   _buildTabRow(
+                                context: ctx,
+                                isLight: isLight,
+                                dynamicLabelColor: dynamicLabelColor,
                                 tabs: tabs,
                                 selectedIndex: selectedIndex,
                                 onTabSelected: onTabSelected,
@@ -1119,6 +1155,12 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
           accessoryH;
 
       final innerBarContent = barContent;
+      // The inner bar lifts its search and dismiss pills above the keyboard.
+      // Include that lift in every ancestor's hit-test bounds, not just the
+      // inner bar: Clip.none permits painting outside a Stack, not tapping it.
+      final keyboardLift = _controller.searchFocused
+          ? MediaQuery.viewInsetsOf(context).bottom
+          : 0.0;
 
       // Must resolve identically to GlassTabBar.preferredSize's call, or the
       // scaffold reserves a height this engine does not draw.
@@ -1148,9 +1190,15 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOutCubic,
           builder: (context, accessoryT, _) {
-            // Outer container height follows the ACCESSORY state.
+            // Outer container height follows the ACCESSORY state, expanding to
+            // the union of the accessory stack and the lifted bar (without
+            // adding accessoryH on top of keyboardLift when expanded).
             final height =
                 ui.lerpDouble(expandedH, collapsedPillH, accessoryT)!;
+            final liftedBarH =
+                (searching ? collapsedPillH : pillH) + keyboardLift;
+            final effectiveHeight =
+                keyboardLift > 0 ? math.max(height, liftedBarH) : height;
 
             // Accessory left/right: constant when expanded, narrows when inline.
             final accessoryLeft = ui.lerpDouble(
@@ -1165,7 +1213,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
             )!;
 
             return SizedBox(
-              height: height,
+              height: effectiveHeight,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -1241,6 +1289,9 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
   }
 
   Widget _buildTabRow({
+    required BuildContext context,
+    required bool isLight,
+    required Color dynamicLabelColor,
     required List<GlassTab> tabs,
     required int selectedIndex,
     required ValueChanged<int> onTabSelected,
@@ -1258,6 +1309,17 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
       final pillTabIndex = tabs.length <= 1
           ? 0.0
           : ((alignment.x + 1.0) * 0.5) * (tabs.length - 1);
+      final activeColors = resolveActiveLensTabColors(
+        context: context,
+        isLight: isLight,
+        intensity: intensity,
+        indicatorColor: widget.indicatorColor,
+        indicatorSettings: widget.indicatorSettings,
+        restingIconColor: resolvedSelectedIconColor,
+        restingLabelColor: widget.selectedLabelColor,
+        dynamicLabelColor: dynamicLabelColor,
+        fallbackLabelColor: widget.textStyle?.color,
+      );
 
       return ExcludeSemantics(
         child: _ltrTabRow(
@@ -1270,9 +1332,9 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
                         child: BottomBarTabItem(
                           tab: tabs[i],
                           selected: true,
-                          selectedIconColor: resolvedSelectedIconColor,
+                          selectedIconColor: activeColors.iconColor,
                           unselectedIconColor: resolvedUnselectedIconColor,
-                          selectedLabelColor: widget.selectedLabelColor,
+                          selectedLabelColor: activeColors.labelColor,
                           unselectedLabelColor: widget.unselectedLabelColor,
                           selectedLabelStyle: widget.selectedLabelStyle,
                           unselectedLabelStyle: widget.unselectedLabelStyle,

@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsRole;
+
 import 'package:flutter/cupertino.dart';
 import '../../constants/glass_defaults.dart';
 import '../../src/renderer/liquid_glass_renderer.dart';
@@ -184,7 +186,7 @@ Future<T?> showGlassActionSheet<T>({
   if (style != GlassStyle.classic) {
     // ios26 / ios27: the native action sheet is the alert platter with
     // stacked actions (Cancel included), centred on screen.
-    return showCupertinoDialog<T>(
+    return pushGlassAlertRoute<T>(
       context: context,
       barrierDismissible: barrierDismissible,
       barrierColor: glassAlertBarrierColor(isDark: isDark),
@@ -197,6 +199,7 @@ Future<T?> showGlassActionSheet<T>({
             settings: settings,
             quality: quality,
             forceStacked: true,
+            semanticsRole: SemanticsRole.dialog,
             actions: [
               for (final action in actions)
                 GlassAlertPlatterAction(
